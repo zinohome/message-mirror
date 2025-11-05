@@ -1,0 +1,77 @@
+# Message Mirror 配置文件示例
+# 用于Docker环境部署
+
+# 数据源配置（支持插件）
+source:
+  type: "kafka"  # 支持的类型: kafka, rabbitmq, file
+  
+  # Kafka插件配置
+  brokers:
+    - "kafka-source:9092"  # Docker环境使用服务名
+  topic: "source-topic"
+  group_id: "message-mirror-group"
+  auto_offset_reset: "earliest"
+  session_timeout: 30s
+  batch_size: 100
+  security_protocol: "PLAINTEXT"
+
+# 目标Kafka集群配置
+target:
+  brokers:
+    - "kafka-target:9092"  # Docker环境使用服务名
+  topic: ""  # 如果为空，则使用源topic名称或默认"mirrored-messages"
+  security_protocol: "PLAINTEXT"
+
+# 镜像配置
+mirror:
+  enabled: true
+  preserve_partition: true
+  worker_count: 4
+  
+  # 流控配置（0表示不限制）
+  consumer_rate_limit: 0
+  consumer_burst_size: 100
+  producer_rate_limit: 0
+  producer_burst_size: 100
+  bytes_rate_limit: 0
+  bytes_burst_size: 10485760
+
+# 生产者配置
+producer:
+  max_message_bytes: 1000000
+  compression_type: "snappy"
+  required_acks: 1
+  flush_frequency: 100ms
+  retry_max: 3
+  idempotent: true
+
+# 日志配置
+log:
+  file_path: "/app/logs/message-mirror.log"
+  stats_interval: 10s
+  rotate_interval: 24h
+  max_archive_files: 7
+  async_buffer_size: 1000
+
+# HTTP服务器配置
+server:
+  enabled: true
+  address: ":8080"
+
+# 重试配置
+retry:
+  enabled: true
+  max_retries: 3
+  initial_interval: 100ms
+  max_interval: 10s
+  multiplier: 2.0
+  jitter: true
+
+# 消息去重配置
+dedup:
+  enabled: false
+  strategy: "key_value"
+  ttl: 24h
+  max_entries: 1000000
+  cleanup_interval: 1h
+

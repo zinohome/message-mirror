@@ -1,0 +1,34 @@
+# 文件监控数据源配置示例
+source:
+  type: "file"
+  
+  watch_dir: "/data/watch"      # 监控目录
+  finish_dir: "/data/finish"   # 完成目录（处理后的文件会移动到这里）
+  file_pattern: "*.txt"         # 文件匹配模式，如 "*.txt", "*.json", "*"
+  poll_interval: 1s             # 轮询间隔
+  recursive: false              # 是否递归监控子目录
+
+# 目标Kafka集群配置
+target:
+  brokers:
+    - "localhost:9093"
+  topic: "mirrored-from-files"
+  security_protocol: "PLAINTEXT"
+
+# 镜像配置
+mirror:
+  enabled: true
+  worker_count: 4
+
+# 生产者配置
+producer:
+  compression_type: "snappy"
+  idempotent: true
+
+# 日志配置
+log:
+  file_path: "message-mirror.log"
+  stats_interval: 10s
+  rotate_interval: 24h
+  max_archive_files: 7
+  async_buffer_size: 1000

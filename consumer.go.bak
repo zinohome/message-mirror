@@ -1,0 +1,162 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/IBM/sarama"
+)
+
+// MirrorConsumer 镜像消费者
+type MirrorConsumer struct {
+	config   *Config
+	consumer sarama.ConsumerGroup
+	msgChan  chan *sarama.ConsumerMessage
+	handler  *consumerGroupHandler
+}
+
+// consumerGroupHandler 消费者组处理器
+type consumerGroupHandler struct {
+	msgChan chan *sarama.ConsumerMessage
+}
+
+// Setup 会话开始时调用
+func (h *consumerGroupHandler) Setup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+// Cleanup 会话结束时调用
+func (h *consumerGroupHandler) Cleanup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+// ConsumeClaim 消费消息
+func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	for {
+		select {
+		case message := <-claim.Messages():
+			if message == nil {
+				return nil
+			}
+
+			// 将消息发送到通道
+			select {
+			case h.msgChan <- message:
+				// 标记消息已处理
+				session.MarkMessage(message, "")
+			case <-session.Context().Done():
+				return nil
+			}
+
+		case <-session.Context().Done():
+			return nil
+		}
+	}
+}
+
+// NewMirrorConsumer 创建新的镜像消费者
+func NewMirrorConsumer(config *Config) (*MirrorConsumer, error) {
+	// 创建Sarama配置
+	saramaConfig := sarama.NewConfig()
+	saramaConfig.Version = sarama.V2_8_0_0
+
+	// 消费者配置
+	saramaConfig.Consumer.Group.Rebalance.Strategy = sarama.NewBalanceStrategyRoundRobin()
+	saramaConfig.Consumer.Offsets.Initial = sarama.OffsetOldest
+	if config.Consumer.AutoOffsetReset == "latest" {
+		saramaConfig.Consumer.Offsets.Initial = sarama.OffsetNewest
+	}
+
+	// 会话超时
+	saramaConfig.Consumer.Group.Session.Timeout = config.Consumer.SessionTimeout
+	saramaConfig.Consumer.Group.Heartbeat.Interval = config.Consumer.HeartbeatInterval
+	saramaConfig.Consumer.MaxProcessingTime = config.Consumer.MaxProcessingTime
+
+	// 启用自动提交offset
+	saramaConfig.Consumer.Offsets.AutoCommit.Enable = true
+	saramaConfig.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
+
+	// 设置最大处理时间
+	saramaConfig.Consumer.MaxProcessingTime = config.Consumer.MaxProcessingTime
+
+	// SASL配置
+	if config.Source.SecurityProtocol == "SASL_PLAINTEXT" || config.Source.SecurityProtocol == "SASL_SSL" {
+		saramaConfig.Net.SASL.Enable = true
+		saramaConfig.Net.SASL.Mechanism = sarama.SASLTypePlaintext
+		saramaConfig.Net.SASL.User = config.Source.SASLUsername
+		saramaConfig.Net.SASL.Password = config.Source.SASLPassword
+	}
+
+	// 创建消费者组
+	consumer, err := sarama.NewConsumerGroup(config.Source.Brokers, config.Consumer.GroupID, saramaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("创建消费者组失败: %w", err)
+	}
+
+	msgChan := make(chan *sarama.ConsumerMessage, config.Consumer.BatchSize*2)
+	handler := &consumerGroupHandler{
+		msgChan: msgChan,
+	}
+
+	return &MirrorConsumer{
+		config:   config,
+		consumer: consumer,
+		msgChan:  msgChan,
+		handler:  handler,
+	}, nil
+}
+
+// Start 启动消费者
+func (mc *MirrorConsumer) Start(ctx context.Context) error {
+	topics := mc.getTopics()
+	if len(topics) == 0 {
+		return fmt.Errorf("没有配置要消费的topics")
+	}
+
+	log.Printf("开始消费topics: %v", topics)
+
+	// 启动消费者组
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if err := mc.consumer.Consume(ctx, topics, mc.handler); err != nil {
+					log.Printf("消费错误: %v", err)
+					time.Sleep(1 * time.Second)
+				}
+			}
+		}
+	}()
+
+	return nil
+}
+
+// Stop 停止消费者
+func (mc *MirrorConsumer) Stop() error {
+	close(mc.msgChan)
+	return mc.consumer.Close()
+}
+
+// Messages 返回消息通道
+func (mc *MirrorConsumer) Messages() <-chan *sarama.ConsumerMessage {
+	return mc.msgChan
+}
+
+// getTopics 获取要消费的topics列表
+func (mc *MirrorConsumer) getTopics() []string {
+	// 如果配置了单个topic
+	if mc.config.Source.Topic != "" {
+		return []string{mc.config.Source.Topic}
+	}
+
+	// 如果配置了topics列表
+	if len(mc.config.Source.Topics) > 0 {
+		return mc.config.Source.Topics
+	}
+
+	return []string{}
+}

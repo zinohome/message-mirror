@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# 构建产物
+message-mirror
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# 测试文件
+*_test.go
+testdata/
+
+# 文档
+*.md
+!README.md
+docs/
+
+# 日志文件
+*.log
+logs/
+*.tar.gz
+
+# 配置文件（Docker环境使用自己的配置）
+config.yaml
+config.*.yaml
+!config.yaml.example
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# OS文件
+.DS_Store
+Thumbs.db
+*.swp
+
+# 依赖目录
+vendor/
+
+# Docker相关
+.docker/
+
+# CI/CD
+.github/
+.gitlab-ci.yml

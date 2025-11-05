@@ -1,0 +1,43 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+message-mirror
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config files with sensitive data
+config.local.yaml
+*.key
+*.pem
+
+# Docker volumes (保留目录结构，但忽略内容)
+config/*
+!config/.gitkeep
+logs/*
+!logs/.gitkeep
+data/*
+!data/.gitkeep

@@ -1,0 +1,119 @@
+# 数据源配置（支持插件）
+source:
+  type: "kafka"  # 支持的类型: kafka, rabbitmq, file
+  
+  # Kafka插件配置
+  brokers:
+    - "localhost:9092"
+  topic: "source-topic"
+  # topics:
+  #   - "topic1"
+  #   - "topic2"
+  group_id: "message-mirror-group"
+  auto_offset_reset: "earliest"  # earliest 或 latest
+  session_timeout: 30s
+  batch_size: 100
+  security_protocol: "PLAINTEXT"  # PLAINTEXT, SASL_PLAINTEXT, SASL_SSL
+  sasl_username: ""
+  sasl_password: ""
+
+  # RabbitMQ插件配置示例（当type为rabbitmq时使用）
+  # url: "amqp://guest:guest@localhost:5672/"
+  # exchange: "my-exchange"
+  # queue: "my-queue"
+  # queue_options:
+  #   durable: true
+  #   auto_delete: false
+  #   exclusive: false
+
+  # 文件监控插件配置示例（当type为file时使用）
+  # watch_dir: "/path/to/watch"
+  # finish_dir: "/path/to/finish"
+  # file_pattern: "*.txt"  # 文件匹配模式，如 "*.txt", "*.json"
+  # poll_interval: 1s
+  # recursive: false  # 是否递归监控子目录
+
+# 目标Kafka集群配置
+target:
+  brokers:
+    - "localhost:9093"
+  topic: ""  # 如果为空，则使用源topic名称或默认"mirrored-messages"
+  security_protocol: "PLAINTEXT"
+  sasl_mechanism: ""
+  sasl_username: ""
+  sasl_password: ""
+
+# 镜像配置
+mirror:
+  enabled: true
+  topic_pattern: ""  # topic匹配模式（可选）
+  exclude_topics: []  # 排除的topics
+  preserve_partition: true  # 是否保留分区信息（仅对Kafka源有效）
+  offset_sync: false  # 是否同步offset（高级功能）
+  worker_count: 4  # 工作协程数量
+  
+  # 流控配置（0表示不限制）
+  consumer_rate_limit: 0    # 消费速率限制（消息/秒，0表示不限制）
+  consumer_burst_size: 100 # 消费突发大小（允许的突发消息数）
+  producer_rate_limit: 0    # 生产速率限制（消息/秒，0表示不限制）
+  producer_burst_size: 100 # 生产突发大小（允许的突发消息数）
+  bytes_rate_limit: 0       # 字节速率限制（字节/秒，0表示不限制，优先于消息速率限制）
+  bytes_burst_size: 10485760 # 字节突发大小（默认10MB，10485760字节）
+  
+  # 批处理配置（性能优化）
+  batch_enabled: false      # 是否启用批处理（默认false，启用后可以提高吞吐量）
+  batch_size: 100           # 批处理大小（消息数）
+  batch_timeout: 100ms      # 批处理超时时间（即使未达到batch_size也会发送）
+
+# 生产者配置
+producer:
+  max_message_bytes: 1000000  # 1MB
+  compression_type: "snappy"  # none, gzip, snappy, lz4, zstd
+  required_acks: 1  # 0, 1, -1 (all)
+  flush_frequency: 100ms
+  retry_max: 3
+  idempotent: true  # 启用幂等性
+
+# 日志配置
+log:
+  file_path: "message-mirror.log"  # 日志文件路径
+  stats_interval: 10s               # 统计信息打印间隔
+  rotate_interval: 24h              # 日志轮转间隔（多长时间轮转一次）
+  max_archive_files: 7              # 保留的归档文件数量
+  async_buffer_size: 1000           # 异步缓冲区大小
+
+# HTTP服务器配置（提供健康检查和Prometheus指标）
+server:
+  enabled: true                     # 是否启用HTTP服务器
+  address: ":8080"                  # HTTP服务器监听地址
+
+# 重试配置
+retry:
+  enabled: true                     # 是否启用重试机制
+  max_retries: 3                    # 最大重试次数
+  initial_interval: 100ms           # 初始重试间隔
+  max_interval: 10s                 # 最大重试间隔
+  multiplier: 2.0                    # 退避倍数（指数退避）
+  jitter: true                      # 是否添加随机抖动
+
+# 消息去重配置
+dedup:
+  enabled: false                    # 是否启用消息去重
+  strategy: "key_value"              # 去重策略：key, value, key_value, hash
+  ttl: 24h                          # 去重记录的TTL（过期时间）
+  max_entries: 1000000              # 最大去重记录数（防止内存溢出）
+  cleanup_interval: 1h              # 清理过期记录的间隔
+
+# 安全配置
+security:
+  tls:
+    enabled: false                   # 是否启用TLS
+    cert_file: ""                    # 客户端证书文件路径
+    key_file: ""                     # 客户端私钥文件路径
+    ca_file: ""                      # CA证书文件路径
+    insecure_skip_verify: false      # 是否跳过证书验证（生产环境不推荐）
+    min_version: "1.2"               # 最小TLS版本（1.0, 1.1, 1.2, 1.3）
+    max_version: ""                  # 最大TLS版本（可选）
+  audit_enabled: false               # 是否启用安全审计日志
+  config_encryption: false           # 是否启用配置加密（敏感信息）
+  encryption_key: ""                 # 加密密钥（建议使用环境变量）

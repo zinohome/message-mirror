@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'message-mirror'
+    environment: 'production'
+
+scrape_configs:
+  # Message Mirror metrics
+  - job_name: 'message-mirror'
+    static_configs:
+      - targets: ['message-mirror:8080']
+        labels:
+          service: 'message-mirror'
+          instance: 'message-mirror-1'
+
