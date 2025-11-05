@@ -25,6 +25,19 @@ func main() {
 
 	rootCmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "配置文件路径")
 
+	// 添加version命令
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "显示版本信息",
+		Run: func(cmd *cobra.Command, args []string) {
+			log.Printf("Message Mirror")
+			log.Printf("版本: %s", Version)
+			log.Printf("构建时间: %s", BuildTime)
+			log.Printf("Git提交: %s", GitCommit)
+		},
+	}
+	rootCmd.AddCommand(versionCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatalf("执行失败: %v", err)
 	}

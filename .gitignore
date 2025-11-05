@@ -41,3 +41,9 @@ logs/*
 !logs/.gitkeep
 data/*
 !data/.gitkeep
+
+# Release目录（忽略二进制文件，保留打包文件）
+release/*.exe
+release/message-mirror-*
+!release/*.tar.gz
+!release/*.zip
