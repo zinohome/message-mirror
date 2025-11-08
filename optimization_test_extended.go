@@ -15,8 +15,8 @@ func TestBatchProcessor_FlushOnTimeout(t *testing.T) {
 	}
 	
 	ctx := context.Background()
-	batchProcessor := NewBatchProcessor(100, 100*time.Millisecond, processor, ctx)
-	batchProcessor.Start()
+	batchProcessor := NewBatchProcessor(100, 100*time.Millisecond, processor)
+	batchProcessor.Start(ctx)
 	defer batchProcessor.Stop()
 	
 	// 添加少量消息
@@ -40,8 +40,8 @@ func TestBatchProcessor_ContextCancellation(t *testing.T) {
 	}
 	
 	ctx, cancel := context.WithCancel(context.Background())
-	batchProcessor := NewBatchProcessor(10, 100*time.Millisecond, processor, ctx)
-	batchProcessor.Start()
+	batchProcessor := NewBatchProcessor(10, 100*time.Millisecond, processor)
+	batchProcessor.Start(ctx)
 	
 	// 添加一些消息
 	for i := 0; i < 5; i++ {

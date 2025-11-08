@@ -1,0 +1,358 @@
+# Message Mirror 项目开发规范
+
+## 项目概述
+Message Mirror 是一个用Go语言开发的插件化消息镜像工具，支持从多种数据源（Kafka、RabbitMQ、文件）读取消息并写入Kafka。
+
+## 代码规范
+
+### Go 代码风格
+- 遵循 Go 官方代码规范 (https://golang.org/doc/effective_go)
+- 使用 `gofmt` 格式化代码
+- 使用 `golint` 检查代码风格
+- 所有公开函数必须有注释
+- 错误处理必须完整，使用 `fmt.Errorf` 包装错误
+
+### 命名规范
+- 包名: 小写，简短
+- 函数名: 驼峰命名，公开函数首字母大写
+- 变量名: 驼峰命名，简短有意义
+- 常量: 全大写，下划线分隔
+- 接口名: 通常以 `-er` 结尾
+
+### 代码组织
+```go
+package main
+
+import (
+    // 标准库
+    "fmt"
+    "time"
+    
+    // 第三方库
+    "github.com/IBM/sarama"
+)
+
+// 类型定义
+type Config struct {
+    // ...
+}
+
+// 常量
+const (
+    DefaultWorkerCount = 4
+)
+
+// 变量
+var (
+    // ...
+)
+
+// 函数
+func main() {
+    // ...
+}
+```
+
+## 错误处理
+
+### 必须检查所有错误
+```go
+config, err := LoadConfig(path)
+if err != nil {
+    return fmt.Errorf("加载配置失败: %w", err)
+}
+```
+
+### 使用错误包装
+```go
+if err != nil {
+    return fmt.Errorf("处理消息失败: %w", err)
+}
+```
+
+### 提供有意义的错误信息
+```go
+// 好
+return fmt.Errorf("无法连接到Kafka集群 %v: %w", brokers, err)
+
+// 不好
+return err
+```
+
+## 并发安全
+
+### 使用互斥锁保护共享状态
+```go
+type Stats struct {
+    mu   sync.RWMutex
+    count int64
+}
+
+func (s *Stats) Increment() {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    s.count++
+}
+```
+
+### 使用 channel 进行通信
+```go
+msgChan := make(chan *Message, 100)
+```
+
+### 使用 context 控制生命周期
+```go
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+```
+
+## 资源管理
+
+### 及时关闭资源
+```go
+file, err := os.Open(path)
+if err != nil {
+    return err
+}
+defer file.Close()
+```
+
+### 使用 defer 确保清理
+```go
+func (p *Plugin) Start() error {
+    p.conn, err = amqp.Dial(url)
+    if err != nil {
+        return err
+    }
+    defer func() {
+        if err != nil {
+            p.conn.Close()
+        }
+    }()
+    // ...
+}
+```
+
+## 测试规范
+
+### 测试文件命名
+- 测试文件以 `_test.go` 结尾
+- 测试文件与被测试文件在同一包中
+
+### 测试函数命名
+```go
+func TestFunctionName(t *testing.T) {
+    // ...
+}
+
+func TestFunctionName_Scenario(t *testing.T) {
+    // ...
+}
+
+func BenchmarkFunctionName(b *testing.B) {
+    // ...
+}
+```
+
+### 测试结构
+```go
+func TestLoadConfig(t *testing.T) {
+    // Arrange (准备)
+    testCases := []struct {
+        name    string
+        path    string
+        wantErr bool
+    }{
+        {"valid config", "testdata/config.yaml", false},
+        {"invalid path", "nonexistent.yaml", true},
+    }
+    
+    // Act & Assert (执行和断言)
+    for _, tc := range testCases {
+        t.Run(tc.name, func(t *testing.T) {
+            config, err := LoadConfig(tc.path)
+            if (err != nil) != tc.wantErr {
+                t.Errorf("LoadConfig() error = %v, wantErr %v", err, tc.wantErr)
+                return
+            }
+            if !tc.wantErr && config == nil {
+                t.Error("LoadConfig() returned nil config")
+            }
+        })
+    }
+}
+```
+
+## 注释规范
+
+### 包注释
+```go
+// Package config 提供配置加载和管理功能
+package config
+```
+
+### 函数注释
+```go
+// LoadConfig 从指定路径加载配置文件
+// 支持 YAML、JSON、TOML 格式
+// 如果文件不存在，返回默认配置
+func LoadConfig(path string) (*Config, error) {
+    // ...
+}
+```
+
+### 复杂逻辑注释
+```go
+// 使用指数退避策略计算重试延迟
+// delay = baseDelay * (2 ^ retryCount) + jitter
+delay := baseDelay * time.Duration(1<<retryCount)
+delay += time.Duration(rand.Intn(int(jitter)))
+```
+
+## Git 提交规范
+
+### 提交信息格式
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+### Type 类型
+- `feat`: 新功能
+- `fix`: 修复bug
+- `docs`: 文档更新
+- `style`: 代码格式调整
+- `refactor`: 重构
+- `test`: 测试相关
+- `chore`: 构建/工具相关
+
+### 示例
+```
+feat(plugin): 添加RabbitMQ插件支持
+
+实现了RabbitMQ数据源插件，支持从RabbitMQ队列消费消息并写入Kafka。
+
+Closes #123
+```
+
+## 项目结构
+
+### 文件组织
+- 核心逻辑文件在根目录
+- 测试文件与被测试文件在同一目录
+- 文档在 `docs/` 目录
+- Docker相关文件在 `docker/` 目录
+- 发布包在 `release/` 目录
+
+### 插件系统
+- 插件接口定义在 `plugin.go`
+- 具体插件实现在根目录（如 `kafka_plugin.go`）
+- 插件文档在 `plugins/README.md`
+
+## 配置管理
+
+### 配置结构
+- 使用 Viper 管理配置
+- 配置结构定义在 `config.go`
+- 支持 YAML、JSON、TOML 格式
+- 支持环境变量覆盖
+- 支持配置热重载
+
+### 配置验证
+- 所有配置项都应该有默认值
+- 配置加载时进行验证
+- 提供清晰的错误信息
+
+## 性能优化
+
+### 原则
+1. 避免过早优化
+2. 使用基准测试验证性能
+3. 注意内存和CPU使用
+4. 合理使用goroutine和channel
+
+### 优化点
+- 批处理支持
+- 连接池
+- 消息缓存
+- 速率限制
+
+## 安全规范
+
+### 敏感信息
+- 不要在代码中硬编码密码、密钥
+- 使用环境变量或配置文件（加密）
+- 配置加密支持（可选）
+
+### 输入验证
+- 验证所有外部输入
+- 错误信息不要泄露敏感信息
+
+### 依赖管理
+- 定期更新依赖
+- 修复安全漏洞
+- 使用 `go mod` 管理依赖
+
+## Web界面开发
+
+### 前端规范
+- 使用现代前端框架（React/Vue）
+- 响应式设计
+- 实时更新（WebSocket）
+- 配置验证
+
+### API设计
+- RESTful API
+- JSON格式
+- 错误处理统一
+- API版本控制
+
+### 配置热重载
+- 配置变更通知
+- 优雅更新组件
+- 回滚支持
+
+## 代码审查清单
+
+- [ ] 代码符合Go代码规范
+- [ ] 所有公开函数都有注释
+- [ ] 错误处理完整
+- [ ] 并发安全（如需要）
+- [ ] 资源正确释放
+- [ ] 有相应的测试
+- [ ] 测试通过
+- [ ] 没有引入新的警告
+- [ ] 提交信息符合规范
+
+## 常用命令
+
+### 开发
+```bash
+make build          # 构建
+make test           # 运行测试
+make run            # 运行程序
+```
+
+### 发布
+```bash
+make release        # 构建并打包发布版本
+make version        # 显示版本信息
+```
+
+### Docker
+```bash
+make docker-build   # 构建Docker镜像
+make docker-compose-up  # 启动服务
+```
+
+## 注意事项
+
+1. **不要修改已发布的API**: 保持向后兼容
+2. **测试覆盖**: 核心组件测试覆盖率 > 80%
+3. **文档更新**: 代码变更时同步更新文档
+4. **性能测试**: 重要功能变更时进行性能测试
+5. **安全审查**: 涉及安全的功能需要安全审查
+

@@ -21,31 +21,40 @@ type BatchProcessor struct {
 }
 
 // NewBatchProcessor 创建新的批处理器
-func NewBatchProcessor(batchSize int, batchTimeout time.Duration, processor func([]*Message) error, ctx context.Context) *BatchProcessor {
-	batchCtx, cancel := context.WithCancel(ctx)
-	
+func NewBatchProcessor(batchSize int, batchTimeout time.Duration, processor func([]*Message) error) *BatchProcessor {
 	return &BatchProcessor{
 		batchSize:    batchSize,
 		batchTimeout: batchTimeout,
 		processor:    processor,
 		messageChan:  make(chan *Message, batchSize*2),
 		batch:        make([]*Message, 0, batchSize),
-		ctx:          batchCtx,
-		cancel:       cancel,
 	}
 }
 
 // Start 启动批处理器
-func (bp *BatchProcessor) Start() {
+func (bp *BatchProcessor) Start(ctx context.Context) {
+	bp.ctx, bp.cancel = context.WithCancel(ctx)
 	bp.wg.Add(1)
 	go bp.processBatch()
 }
 
 // Stop 停止批处理器
 func (bp *BatchProcessor) Stop() {
-	bp.cancel()
-	close(bp.messageChan)
+	if bp.cancel != nil {
+		bp.cancel()
+	}
+	if bp.messageChan != nil {
+		close(bp.messageChan)
+	}
 	bp.wg.Wait()
+}
+
+// UpdateConfig 更新批处理器配置
+func (bp *BatchProcessor) UpdateConfig(batchSize int, batchTimeout time.Duration) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	bp.batchSize = batchSize
+	bp.batchTimeout = batchTimeout
 }
 
 // Add 添加消息到批处理队列

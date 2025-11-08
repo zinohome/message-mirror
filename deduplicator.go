@@ -210,3 +210,26 @@ func (d *Deduplicator) Stop() {
 	log.Printf("[去重器] 已停止，总共去重 %d 条消息，当前记录数: %d", d.totalDedup, len(d.entries))
 }
 
+// UpdateConfig 更新去重器配置
+func (d *Deduplicator) UpdateConfig(newConfig *DedupConfig) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	oldEnabled := d.config.Enabled
+	d.config = newConfig
+
+	// 如果从禁用变为启用，启动清理goroutine
+	if !oldEnabled && newConfig.Enabled {
+		d.wg.Add(1)
+		go d.cleanupWorker()
+	}
+
+	// 如果从启用变为禁用，停止清理goroutine
+	if oldEnabled && !newConfig.Enabled {
+		d.cancel()
+		d.wg.Wait()
+		// 重新创建context
+		d.ctx, d.cancel = context.WithCancel(context.Background())
+	}
+}
+

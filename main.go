@@ -44,11 +44,14 @@ func main() {
 }
 
 func run(cmd *cobra.Command, args []string) error {
-	// 加载配置
-	config, err := LoadConfig(configPath)
+	// 创建配置管理器
+	configManager, err := NewConfigManager(configPath)
 	if err != nil {
 		return err
 	}
+
+	// 获取配置
+	config := configManager.GetConfig()
 
 	log.Printf("配置加载成功: 源类型=%s, 目标集群=%v",
 		config.Source.Type, config.Target.Brokers)
@@ -59,6 +62,9 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// 注册配置重载监听器
+	configManager.RegisterListener(mirrorMaker)
+
 	// 启动MirrorMaker
 	if err := mirrorMaker.Start(); err != nil {
 		return err
@@ -68,7 +74,7 @@ func run(cmd *cobra.Command, args []string) error {
 	var httpServer *HTTPServer
 	if config.Server.Enabled {
 		metrics := mirrorMaker.GetMetrics()
-		httpServer = NewHTTPServer(config.Server.Address, metrics, mirrorMaker, context.Background())
+		httpServer = NewHTTPServer(config.Server.Address, metrics, mirrorMaker, configManager, context.Background())
 		if err := httpServer.Start(); err != nil {
 			log.Printf("启动HTTP服务器失败: %v", err)
 		}

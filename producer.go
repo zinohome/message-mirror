@@ -161,3 +161,12 @@ func (mp *MirrorProducer) handleErrors() {
 		}
 	}
 }
+
+// UpdateConfig 更新配置（注意：生产者配置更新需要重启，这里只更新配置引用）
+func (mp *MirrorProducer) UpdateConfig(newConfig *Config) error {
+	mp.config = newConfig
+	// 注意：Sarama生产者不支持运行时配置更新，需要重启才能生效
+	// 这里只更新配置引用，实际配置更新需要在重启时生效
+	log.Println("生产者配置已更新（需要重启才能完全生效）")
+	return nil
+}

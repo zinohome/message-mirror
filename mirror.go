@@ -28,6 +28,7 @@ type MirrorMaker struct {
 	consumerLimiter *RateLimiter  // 消费速率限制器（按消息）
 	producerLimiter *RateLimiter  // 生产速率限制器（按消息）
 	bytesLimiter    *RateLimiter  // 字节速率限制器（按字节，优先使用）
+	mu              sync.RWMutex   // 保护配置更新
 }
 
 // Stats 统计信息
@@ -172,7 +173,7 @@ func NewMirrorMaker(config *Config) (*MirrorMaker, error) {
 			return nil
 		}
 		
-		mm.batchProcessor = NewBatchProcessor(batchSize, batchTimeout, processor, ctx)
+		mm.batchProcessor = NewBatchProcessor(batchSize, batchTimeout, processor)
 	}
 	
 	return mm, nil
@@ -202,7 +203,7 @@ func (mm *MirrorMaker) Start() error {
 
 	// 启动批处理器（如果启用）
 	if mm.batchProcessor != nil {
-		mm.batchProcessor.Start()
+		mm.batchProcessor.Start(mm.ctx)
 		log.Println("批处理器已启动")
 	}
 
@@ -277,6 +278,17 @@ func (mm *MirrorMaker) applyConsumerRateLimit(msg *Message) error {
 		return mm.consumerLimiter.Wait(mm.ctx)
 	}
 
+	return nil
+}
+
+// processBatch 处理批次消息
+func (mm *MirrorMaker) processBatch(batch []*Message) error {
+	for _, msg := range batch {
+		if err := mm.processMessage(msg); err != nil {
+			log.Printf("批处理中处理消息失败: %v", err)
+			// 继续处理其他消息
+		}
+	}
 	return nil
 }
 
@@ -488,6 +500,92 @@ func (mm *MirrorMaker) Stop() error {
 // GetMetrics 获取指标管理器
 func (mm *MirrorMaker) GetMetrics() *Metrics {
 	return mm.metrics
+}
+
+// OnConfigReload 实现ConfigReloadListener接口，处理配置热重载
+func (mm *MirrorMaker) OnConfigReload(oldConfig, newConfig *Config) error {
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+
+	log.Println("开始配置热重载...")
+
+	// 更新配置
+	mm.config = newConfig
+
+	// 更新速率限制器
+	if newConfig.Mirror.BytesRateLimit > 0 {
+		burstSize := newConfig.Mirror.BytesBurstSize
+		if burstSize <= 0 {
+			burstSize = 10485760 // 默认10MB
+		}
+		mm.bytesLimiter = NewBytesRateLimiter(newConfig.Mirror.BytesRateLimit, burstSize)
+		mm.consumerLimiter = nil
+		mm.producerLimiter = nil
+	} else {
+		mm.bytesLimiter = nil
+		if newConfig.Mirror.ConsumerRateLimit > 0 {
+			burstSize := newConfig.Mirror.ConsumerBurstSize
+			if burstSize <= 0 {
+				burstSize = 100
+			}
+			mm.consumerLimiter = NewRateLimiter(newConfig.Mirror.ConsumerRateLimit, burstSize, true)
+		}
+		if newConfig.Mirror.ProducerRateLimit > 0 {
+			burstSize := newConfig.Mirror.ProducerBurstSize
+			if burstSize <= 0 {
+				burstSize = 100
+			}
+			mm.producerLimiter = NewRateLimiter(newConfig.Mirror.ProducerRateLimit, burstSize, true)
+		}
+	}
+
+	// 更新批处理器
+	if newConfig.Mirror.BatchEnabled {
+		if mm.batchProcessor == nil {
+			// 创建新的批处理器
+			mm.batchProcessor = NewBatchProcessor(newConfig.Mirror.BatchSize, newConfig.Mirror.BatchTimeout, mm.processBatch)
+			mm.batchProcessor.Start(mm.ctx)
+		} else {
+			// 更新现有批处理器的配置
+			mm.batchProcessor.UpdateConfig(newConfig.Mirror.BatchSize, newConfig.Mirror.BatchTimeout)
+		}
+	} else {
+		if mm.batchProcessor != nil {
+			mm.batchProcessor.Stop()
+			mm.batchProcessor = nil
+		}
+	}
+
+	// 更新重试管理器
+	if newConfig.Retry.Enabled {
+		retryConfig := &RetryConfigInternal{
+			MaxRetries:      newConfig.Retry.MaxRetries,
+			InitialInterval: newConfig.Retry.InitialInterval,
+			MaxInterval:     newConfig.Retry.MaxInterval,
+			Multiplier:      newConfig.Retry.Multiplier,
+			Jitter:          newConfig.Retry.Jitter,
+		}
+		if retryConfig.MaxRetries == 0 {
+			retryConfig = DefaultRetryConfig()
+		}
+		mm.retryManager = NewRetryManager(retryConfig)
+	} else {
+		mm.retryManager = nil
+	}
+
+	// 更新去重器配置
+	if mm.deduplicator != nil {
+		mm.deduplicator.UpdateConfig(&newConfig.Dedup)
+	}
+
+	// 更新生产者配置（需要重启生产者）
+	if err := mm.producer.UpdateConfig(newConfig); err != nil {
+		log.Printf("更新生产者配置失败: %v", err)
+		// 不返回错误，因为其他配置已更新
+	}
+
+	log.Println("配置热重载完成")
+	return nil
 }
 
 // printStats 定期打印统计信息

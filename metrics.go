@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"sync"
@@ -177,16 +180,17 @@ func (m *Metrics) SetHealthStatus(healthy bool) {
 
 // HTTPServer HTTP服务器（提供健康检查和指标）
 type HTTPServer struct {
-	server   *http.Server
-	metrics  *Metrics
-	mirror   *MirrorMaker
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	server        *http.Server
+	metrics       *Metrics
+	mirror        *MirrorMaker
+	configManager *ConfigManager
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 // NewHTTPServer 创建新的HTTP服务器
-func NewHTTPServer(addr string, metrics *Metrics, mirror *MirrorMaker, ctx context.Context) *HTTPServer {
+func NewHTTPServer(addr string, metrics *Metrics, mirror *MirrorMaker, configManager *ConfigManager, ctx context.Context) *HTTPServer {
 	serverCtx, cancel := context.WithCancel(ctx)
 
 	mux := http.NewServeMux()
@@ -196,17 +200,27 @@ func NewHTTPServer(addr string, metrics *Metrics, mirror *MirrorMaker, ctx conte
 	}
 
 	httpServer := &HTTPServer{
-		server:  server,
-		metrics: metrics,
-		mirror:  mirror,
-		ctx:     serverCtx,
-		cancel:  cancel,
+		server:        server,
+		metrics:       metrics,
+		mirror:        mirror,
+		configManager: configManager,
+		ctx:           serverCtx,
+		cancel:        cancel,
 	}
 
 	// 注册路由
 	mux.HandleFunc("/health", httpServer.healthHandler)
 	mux.HandleFunc("/ready", httpServer.readyHandler)
 	mux.Handle("/metrics", promhttp.Handler())
+	
+	// 配置API
+	mux.HandleFunc("/api/config", httpServer.configHandler)
+	mux.HandleFunc("/api/config/reload", httpServer.configReloadHandler)
+	mux.HandleFunc("/api/stats", httpServer.statsHandler)
+	
+	// Web UI静态文件
+	mux.HandleFunc("/", httpServer.webUIHandler)
+	mux.HandleFunc("/ui", httpServer.webUIHandler)
 
 	return httpServer
 }
@@ -304,5 +318,117 @@ func (s *HTTPServer) readyHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte(`{"status":"not ready"}`))
 	}
+}
+
+// configHandler 配置处理器
+func (s *HTTPServer) configHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if s.configManager == nil {
+		http.Error(w, `{"error":"配置管理器未初始化"}`, http.StatusInternalServerError)
+		return
+	}
+
+	switch r.Method {
+	case "GET":
+		// 获取配置
+		configJSON, err := s.configManager.GetConfigJSON()
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"获取配置失败: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(configJSON)
+
+	case "POST", "PUT":
+		// 更新配置
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"读取请求体失败: %v"}`, err), http.StatusBadRequest)
+			return
+		}
+
+		if err := s.configManager.UpdateConfigFromJSON(body); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"更新配置失败: %v"}`, err), http.StatusBadRequest)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"success","message":"配置已更新"}`))
+
+	default:
+		http.Error(w, `{"error":"不支持的HTTP方法"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// configReloadHandler 配置重载处理器
+func (s *HTTPServer) configReloadHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if s.configManager == nil {
+		http.Error(w, `{"error":"配置管理器未初始化"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, `{"error":"只支持POST方法"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := s.configManager.ReloadFromFile(); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"重载配置失败: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success","message":"配置已重载"}`))
+}
+
+// statsHandler 统计信息处理器
+func (s *HTTPServer) statsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if s.mirror == nil {
+		http.Error(w, `{"error":"MirrorMaker未初始化"}`, http.StatusInternalServerError)
+		return
+	}
+
+	stats := s.mirror.GetStats()
+	response := map[string]interface{}{
+		"messages_consumed": stats.MessagesConsumed,
+		"messages_produced": stats.MessagesProduced,
+		"bytes_consumed":    stats.BytesConsumed,
+		"bytes_produced":    stats.BytesProduced,
+		"errors":            stats.Errors,
+		"last_message_time": stats.LastMessageTime.Format(time.RFC3339),
+		"start_time":        stats.StartTime.Format(time.RFC3339),
+		"uptime_seconds":    time.Since(stats.StartTime).Seconds(),
+	}
+
+	jsonData, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"序列化统计信息失败: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(jsonData)
+}
+
+// webUIHandler Web UI处理器
+func (s *HTTPServer) webUIHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(getWebUIHTML()))
 }
 
