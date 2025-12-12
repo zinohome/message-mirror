@@ -3,17 +3,18 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
-
-	"message-mirror/internal/pkg/deduplicator"
+	
 	"message-mirror/internal/pkg/logger"
-	"message-mirror/internal/pkg/metrics"
-	"message-mirror/internal/pkg/optimization"
 	"message-mirror/internal/pkg/ratelimiter"
 	"message-mirror/internal/pkg/retry"
+	"message-mirror/internal/pkg/deduplicator"
+	"message-mirror/internal/pkg/optimization"
+	"message-mirror/internal/pkg/metrics"
 	"message-mirror/internal/plugins"
 )
 
@@ -26,28 +27,28 @@ type MirrorMaker struct {
 	metrics         *metrics.Metrics
 	retryManager    *retry.RetryManager
 	deduplicator    *deduplicator.Deduplicator
-	batchProcessor  *optimization.BatchProcessor // 批处理器（如果启用）
+	batchProcessor  *optimization.BatchProcessor  // 批处理器（如果启用）
 	ctx             context.Context
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
 	stats           *Stats
 	errorChan       chan error
-	consumerLimiter *ratelimiter.RateLimiter // 消费速率限制器（按消息）
-	producerLimiter *ratelimiter.RateLimiter // 生产速率限制器（按消息）
-	bytesLimiter    *ratelimiter.RateLimiter // 字节速率限制器（按字节，优先使用）
-	mu              sync.RWMutex             // 保护配置更新
+	consumerLimiter *ratelimiter.RateLimiter  // 消费速率限制器（按消息）
+	producerLimiter *ratelimiter.RateLimiter  // 生产速率限制器（按消息）
+	bytesLimiter    *ratelimiter.RateLimiter  // 字节速率限制器（按字节，优先使用）
+	mu              sync.RWMutex   // 保护配置更新
 }
 
 // Stats 统计信息
 type Stats struct {
-	mu               sync.RWMutex
-	MessagesConsumed int64
-	MessagesProduced int64
-	BytesConsumed    int64
-	BytesProduced    int64
-	Errors           int64
-	LastMessageTime  time.Time
-	StartTime        time.Time
+	mu                sync.RWMutex
+	MessagesConsumed  int64
+	MessagesProduced  int64
+	BytesConsumed     int64
+	BytesProduced     int64
+	Errors            int64
+	LastMessageTime   time.Time
+	StartTime         time.Time
 }
 
 // NewMirrorMaker 创建新的MirrorMaker实例
@@ -80,11 +81,11 @@ func NewMirrorMaker(config *Config) (*MirrorMaker, error) {
 
 	// 创建日志管理器
 	logConfig := &logger.LogConfig{
-		FilePath:        config.Log.FilePath,
-		StatsInterval:   config.Log.StatsInterval,
-		RotateInterval:  config.Log.RotateInterval,
-		MaxArchiveFiles: config.Log.MaxArchiveFiles,
-		AsyncBufferSize: config.Log.AsyncBufferSize,
+		FilePath:         config.Log.FilePath,
+		StatsInterval:    config.Log.StatsInterval,
+		RotateInterval:   config.Log.RotateInterval,
+		MaxArchiveFiles:  config.Log.MaxArchiveFiles,
+		AsyncBufferSize:  config.Log.AsyncBufferSize,
 	}
 	loggerInstance, err := logger.NewLogger(logConfig, ctx)
 	if err != nil {
@@ -143,10 +144,10 @@ func NewMirrorMaker(config *Config) (*MirrorMaker, error) {
 
 	// 创建去重器
 	dedupConfig := &deduplicator.DedupConfig{
-		Enabled:         config.Dedup.Enabled,
-		Strategy:        config.Dedup.Strategy,
-		TTL:             config.Dedup.TTL,
-		MaxEntries:      config.Dedup.MaxEntries,
+		Enabled:        config.Dedup.Enabled,
+		Strategy:       config.Dedup.Strategy,
+		TTL:            config.Dedup.TTL,
+		MaxEntries:     config.Dedup.MaxEntries,
 		CleanupInterval: config.Dedup.CleanupInterval,
 	}
 	deduplicatorInstance := deduplicator.NewDeduplicator(dedupConfig, ctx)
@@ -168,7 +169,7 @@ func NewMirrorMaker(config *Config) (*MirrorMaker, error) {
 		producerLimiter: producerLimiter,
 		bytesLimiter:    bytesLimiter,
 	}
-
+	
 	// 如果启用批处理，创建批处理器（需要mm实例）
 	if config.Mirror.BatchEnabled && config.Mirror.BatchSize > 0 {
 		batchSize := config.Mirror.BatchSize
@@ -176,7 +177,7 @@ func NewMirrorMaker(config *Config) (*MirrorMaker, error) {
 		if batchTimeout <= 0 {
 			batchTimeout = 100 * time.Millisecond
 		}
-
+		
 		// 批处理函数：批量发送消息
 		processor := func(batch []*optimization.Message) error {
 			for _, optMsg := range batch {
@@ -195,16 +196,16 @@ func NewMirrorMaker(config *Config) (*MirrorMaker, error) {
 			}
 			return nil
 		}
-
+		
 		mm.batchProcessor = optimization.NewBatchProcessor(batchSize, batchTimeout, processor)
 	}
-
+	
 	return mm, nil
 }
 
 // Start 启动镜像服务
 func (mm *MirrorMaker) Start() error {
-	mm.logger.Println("启动MirrorMaker...")
+	log.Println("启动MirrorMaker...")
 
 	// 启动统计信息打印
 	mm.wg.Add(1)
@@ -227,7 +228,7 @@ func (mm *MirrorMaker) Start() error {
 	// 启动批处理器（如果启用）
 	if mm.batchProcessor != nil {
 		mm.batchProcessor.Start(mm.ctx)
-		mm.logger.Println("批处理器已启动")
+		log.Println("批处理器已启动")
 	}
 
 	// 启动worker goroutines
@@ -236,7 +237,7 @@ func (mm *MirrorMaker) Start() error {
 		go mm.worker(i)
 	}
 
-	mm.logger.Printf("MirrorMaker已启动，使用 %d 个worker", mm.config.Mirror.WorkerCount)
+	log.Printf("MirrorMaker已启动，使用 %d 个worker", mm.config.Mirror.WorkerCount)
 	return nil
 }
 
@@ -244,17 +245,17 @@ func (mm *MirrorMaker) Start() error {
 func (mm *MirrorMaker) worker(id int) {
 	defer mm.wg.Done()
 
-	mm.logger.Printf("Worker %d 启动", id)
+	log.Printf("Worker %d 启动", id)
 
 	for {
 		select {
 		case <-mm.ctx.Done():
-			mm.logger.Printf("Worker %d 停止", id)
+			log.Printf("Worker %d 停止", id)
 			return
 
 		case msg, ok := <-mm.source.Messages():
 			if !ok {
-				mm.logger.Printf("Worker %d: 消息通道已关闭", id)
+				log.Printf("Worker %d: 消息通道已关闭", id)
 				return
 			}
 
@@ -263,7 +264,7 @@ func (mm *MirrorMaker) worker(id int) {
 				if err == mm.ctx.Err() {
 					return
 				}
-				mm.logger.Printf("Worker %d: 应用消费速率限制失败: %v", id, err)
+				log.Printf("Worker %d: 应用消费速率限制失败: %v", id, err)
 				continue
 			}
 
@@ -279,7 +280,7 @@ func (mm *MirrorMaker) worker(id int) {
 					Metadata:  msg.Metadata,
 				}
 				if err := mm.batchProcessor.Add(optMsg); err != nil {
-					mm.logger.Printf("Worker %d: 添加消息到批处理器失败: %v", id, err)
+					log.Printf("Worker %d: 添加消息到批处理器失败: %v", id, err)
 					mm.stats.mu.Lock()
 					mm.stats.Errors++
 					mm.stats.mu.Unlock()
@@ -287,7 +288,7 @@ func (mm *MirrorMaker) worker(id int) {
 			} else {
 				// 否则直接处理单条消息
 				if err := mm.processMessage(msg); err != nil {
-					mm.logger.Printf("Worker %d: 处理消息失败: %v", id, err)
+					log.Printf("Worker %d: 处理消息失败: %v", id, err)
 					mm.stats.mu.Lock()
 					mm.stats.Errors++
 					mm.stats.mu.Unlock()
@@ -313,6 +314,7 @@ func (mm *MirrorMaker) applyConsumerRateLimit(msg *plugins.Message) error {
 	return nil
 }
 
+
 // processMessage 处理单条消息
 func (mm *MirrorMaker) processMessage(msg *plugins.Message) error {
 	startTime := time.Now()
@@ -330,11 +332,11 @@ func (mm *MirrorMaker) processMessage(msg *plugins.Message) error {
 		}
 		isDuplicate, err := mm.deduplicator.IsDuplicate(dedupMsg)
 		if err != nil {
-			mm.logger.Printf("去重检查失败: %v", err)
+			log.Printf("去重检查失败: %v", err)
 			// 去重检查失败不影响消息处理，继续处理
 		} else if isDuplicate {
 			// 消息重复，跳过处理
-			mm.logger.Printf("消息重复，已跳过: key=%s", string(msg.Key))
+			log.Printf("消息重复，已跳过: key=%s", string(msg.Key))
 			// 仍然更新消费统计（因为确实消费了消息）
 			mm.stats.mu.Lock()
 			mm.stats.MessagesConsumed++
@@ -348,7 +350,7 @@ func (mm *MirrorMaker) processMessage(msg *plugins.Message) error {
 
 			// 确认消息已处理（即使是重复的）
 			if err := mm.source.Ack(msg); err != nil {
-				mm.logger.Printf("确认重复消息失败: %v", err)
+				log.Printf("确认重复消息失败: %v", err)
 			}
 			return nil
 		}
@@ -429,7 +431,7 @@ func (mm *MirrorMaker) processMessage(msg *plugins.Message) error {
 
 	// 确认消息已处理
 	if err := mm.source.Ack(msg); err != nil {
-		mm.logger.Printf("确认消息失败: %v", err)
+		log.Printf("确认消息失败: %v", err)
 	}
 
 	return nil
@@ -487,7 +489,7 @@ func (mm *MirrorMaker) convertHeaders(headers map[string][]byte) []sarama.Record
 
 // Stop 停止镜像服务
 func (mm *MirrorMaker) Stop() error {
-	mm.logger.Println("正在停止MirrorMaker...")
+	log.Println("正在停止MirrorMaker...")
 
 	// 取消上下文
 	mm.cancel()
@@ -495,17 +497,17 @@ func (mm *MirrorMaker) Stop() error {
 	// 停止批处理器（如果启用）
 	if mm.batchProcessor != nil {
 		mm.batchProcessor.Stop()
-		mm.logger.Println("批处理器已停止")
+		log.Println("批处理器已停止")
 	}
 
 	// 停止数据源插件
 	if err := mm.source.Stop(); err != nil {
-		mm.logger.Printf("停止数据源插件失败: %v", err)
+		log.Printf("停止数据源插件失败: %v", err)
 	}
 
 	// 停止生产者
 	if err := mm.producer.Stop(); err != nil {
-		mm.logger.Printf("停止生产者失败: %v", err)
+		log.Printf("停止生产者失败: %v", err)
 	}
 
 	// 等待所有goroutine完成
@@ -514,7 +516,7 @@ func (mm *MirrorMaker) Stop() error {
 	// 停止日志管理器
 	if mm.logger != nil {
 		if err := mm.logger.Stop(); err != nil {
-			mm.logger.Printf("停止日志管理器失败: %v", err)
+			log.Printf("停止日志管理器失败: %v", err)
 		}
 	}
 
@@ -523,7 +525,7 @@ func (mm *MirrorMaker) Stop() error {
 		mm.deduplicator.Stop()
 	}
 
-	mm.logger.Println("MirrorMaker已停止")
+	log.Println("MirrorMaker已停止")
 	return nil
 }
 
@@ -537,7 +539,7 @@ func (mm *MirrorMaker) OnConfigReload(oldConfig, newConfig *Config) error {
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
 
-	mm.logger.Println("开始配置热重载...")
+	log.Println("开始配置热重载...")
 
 	// 更新配置
 	mm.config = newConfig
@@ -572,26 +574,26 @@ func (mm *MirrorMaker) OnConfigReload(oldConfig, newConfig *Config) error {
 	// 更新批处理器
 	if newConfig.Mirror.BatchEnabled {
 		if mm.batchProcessor == nil {
-			// 创建新的批处理器
-			processor := func(batch []*optimization.Message) error {
-				for _, optMsg := range batch {
-					// 将optimization.Message转换为plugins.Message
-					msg := &plugins.Message{
-						Key:       optMsg.Key,
-						Value:     optMsg.Value,
-						Headers:   optMsg.Headers,
-						Timestamp: optMsg.Timestamp,
-						Source:    optMsg.Source,
-						Metadata:  optMsg.Metadata,
-					}
-					if err := mm.processMessage(msg); err != nil {
-						mm.logger.Printf("批处理中处理消息失败: %v", err)
-						// 继续处理其他消息
-					}
+		// 创建新的批处理器
+		processor := func(batch []*optimization.Message) error {
+			for _, optMsg := range batch {
+				// 将optimization.Message转换为plugins.Message
+				msg := &plugins.Message{
+					Key:       optMsg.Key,
+					Value:     optMsg.Value,
+					Headers:   optMsg.Headers,
+					Timestamp: optMsg.Timestamp,
+					Source:    optMsg.Source,
+					Metadata:  optMsg.Metadata,
 				}
-				return nil
+				if err := mm.processMessage(msg); err != nil {
+					log.Printf("批处理中处理消息失败: %v", err)
+					// 继续处理其他消息
+				}
 			}
-			mm.batchProcessor = optimization.NewBatchProcessor(newConfig.Mirror.BatchSize, newConfig.Mirror.BatchTimeout, processor)
+			return nil
+		}
+		mm.batchProcessor = optimization.NewBatchProcessor(newConfig.Mirror.BatchSize, newConfig.Mirror.BatchTimeout, processor)
 			mm.batchProcessor.Start(mm.ctx)
 		} else {
 			// 更新现有批处理器的配置
@@ -624,10 +626,10 @@ func (mm *MirrorMaker) OnConfigReload(oldConfig, newConfig *Config) error {
 	// 更新去重器配置
 	if mm.deduplicator != nil {
 		dedupConfig := &deduplicator.DedupConfig{
-			Enabled:         newConfig.Dedup.Enabled,
-			Strategy:        newConfig.Dedup.Strategy,
-			TTL:             newConfig.Dedup.TTL,
-			MaxEntries:      newConfig.Dedup.MaxEntries,
+			Enabled:        newConfig.Dedup.Enabled,
+			Strategy:       newConfig.Dedup.Strategy,
+			TTL:            newConfig.Dedup.TTL,
+			MaxEntries:     newConfig.Dedup.MaxEntries,
 			CleanupInterval: newConfig.Dedup.CleanupInterval,
 		}
 		mm.deduplicator.UpdateConfig(dedupConfig)
@@ -635,11 +637,11 @@ func (mm *MirrorMaker) OnConfigReload(oldConfig, newConfig *Config) error {
 
 	// 更新生产者配置（需要重启生产者）
 	if err := mm.producer.UpdateConfig(newConfig); err != nil {
-		mm.logger.Printf("更新生产者配置失败: %v", err)
+		log.Printf("更新生产者配置失败: %v", err)
 		// 不返回错误，因为其他配置已更新
 	}
 
-	mm.logger.Println("配置热重载完成")
+	log.Println("配置热重载完成")
 	return nil
 }
 
@@ -680,7 +682,7 @@ func (mm *MirrorMaker) printStats() {
 				bytesRate/1024)
 
 			// 同时输出到标准输出和日志文件
-			mm.logger.Println(statsMsg)
+			log.Println(statsMsg)
 			if mm.logger != nil {
 				mm.logger.Println(statsMsg)
 			}
@@ -699,7 +701,7 @@ func (mm *MirrorMaker) handleErrors() {
 		case err := <-mm.errorChan:
 			if err != nil {
 				errMsg := fmt.Sprintf("错误: %v", err)
-				mm.logger.Println(errMsg)
+				log.Println(errMsg)
 				if mm.logger != nil {
 					mm.logger.Println(errMsg)
 				}

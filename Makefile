@@ -14,7 +14,7 @@ PLATFORMS = linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 build:
 	@echo "构建message-mirror v$(VERSION)..."
 	go mod download
-	go build -ldflags "-X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)" -o message-mirror .
+	go build -ldflags "-X message-mirror/internal/pkg/version.BuildTime=$(BUILD_TIME) -X message-mirror/internal/pkg/version.GitCommit=$(GIT_COMMIT) -X message-mirror/internal/pkg/version.Version=$(VERSION)" -o message-mirror ./cmd/message-mirror
 
 # 运行本地构建的二进制文件
 run: build
@@ -24,7 +24,7 @@ run: build
 # 运行测试
 test:
 	@echo "运行测试..."
-	go test -v .
+	go test -v ./...
 
 # 显示版本信息
 version:

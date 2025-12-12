@@ -3,6 +3,7 @@ package version
 import (
 	"bufio"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -13,6 +14,7 @@ var (
 	BuildTime = "unknown"
 	// GitCommit Git提交哈希，编译时注入
 	GitCommit = "unknown"
+	GoVersion = runtime.Version()
 )
 
 func init() {
@@ -28,4 +30,3 @@ func init() {
 		}
 	}
 }
-

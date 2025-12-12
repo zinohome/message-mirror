@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -70,8 +71,8 @@ func (cm *ConfigManager) UpdateConfig(newConfig *Config) error {
 
 	// 保存到文件
 	if err := cm.SaveConfigToFile(newConfig); err != nil {
-		// 配置已在内存中更新，只记录保存文件失败，不阻断流程
-		// 日志级别：警告（配置在内存中但未持久化）
+		log.Printf("保存配置到文件失败: %v", err)
+		// 不返回错误，因为配置已经在内存中更新
 	}
 
 	return nil
@@ -140,3 +141,4 @@ func (cm *ConfigManager) GetConfigYAML() ([]byte, error) {
 	defer cm.mu.RUnlock()
 	return yaml.Marshal(cm.config)
 }
+
