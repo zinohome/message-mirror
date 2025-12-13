@@ -12,7 +12,7 @@ type Metrics struct {
 	// 消息计数器
 	MessagesConsumedTotal prometheus.Counter
 	MessagesProducedTotal prometheus.Counter
-	MessagesFailedTotal  prometheus.Counter
+	MessagesFailedTotal   prometheus.Counter
 
 	// 字节计数器
 	BytesConsumedTotal prometheus.Counter
@@ -32,11 +32,11 @@ type Metrics struct {
 	HealthStatus prometheus.Gauge
 
 	// 内部状态
-	mu            sync.RWMutex
-	lastUpdate    time.Time
-	messageCount  int64
-	byteCount     int64
-	errorCount    int64
+	mu           sync.RWMutex
+	lastUpdate   time.Time
+	messageCount int64
+	byteCount    int64
+	errorCount   int64
 }
 
 // NewMetrics 创建新的指标管理器
@@ -87,20 +87,19 @@ func NewMetrics() *Metrics {
 	}
 }
 
-// Register 注册所有指标
+// Register 注册所有指标（幂等操作，允许重复调用）
 func (m *Metrics) Register() {
-	prometheus.MustRegister(
-		m.MessagesConsumedTotal,
-		m.MessagesProducedTotal,
-		m.MessagesFailedTotal,
-		m.BytesConsumedTotal,
-		m.BytesProducedTotal,
-		m.MessageLatency,
-		m.MessageRate,
-		m.ByteRate,
-		m.ErrorRate,
-		m.HealthStatus,
-	)
+	// 使用Register而不是MustRegister，这样重复注册不会panic
+	_ = prometheus.Register(m.MessagesConsumedTotal)
+	_ = prometheus.Register(m.MessagesProducedTotal)
+	_ = prometheus.Register(m.MessagesFailedTotal)
+	_ = prometheus.Register(m.BytesConsumedTotal)
+	_ = prometheus.Register(m.BytesProducedTotal)
+	_ = prometheus.Register(m.MessageLatency)
+	_ = prometheus.Register(m.MessageRate)
+	_ = prometheus.Register(m.ByteRate)
+	_ = prometheus.Register(m.ErrorRate)
+	_ = prometheus.Register(m.HealthStatus)
 }
 
 // RecordMessageConsumed 记录消息消费

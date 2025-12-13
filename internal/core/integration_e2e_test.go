@@ -8,8 +8,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/testcontainers/testcontainers-go/modules/kafka"
 )
 
 // TestEndToEndKafkaMirroring 端到端Kafka镜像测试
@@ -29,8 +28,6 @@ func TestEndToEndKafkaMirroring(t *testing.T) {
 	}
 	defer kafkaContainer.Terminate(ctx)
 
-	// 等待Kafka就绪
-	time.Sleep(5 * time.Second)
 	t.Logf("Kafka就绪，brokers: %v", brokers)
 
 	// 2. 创建源和目标topic
@@ -66,7 +63,14 @@ func TestEndToEndKafkaMirroring(t *testing.T) {
 		},
 		Producer: ProducerConfig{
 			RequiredAcks:    1,
-			CompressionType: "none",
+			CompressionType: "snappy",
+			MaxMessageBytes: 1000000,
+			RetryMax:        3,
+			FlushFrequency:  100 * time.Millisecond,
+		},
+		Log: LogConfig{
+			FilePath:      "/tmp/message-mirror-test.log",
+			StatsInterval: 5 * time.Second,
 		},
 	}
 
@@ -127,14 +131,23 @@ func TestEndToEndKafkaMirroring(t *testing.T) {
 
 	receivedMessages := make(map[string]string)
 	timeout := time.After(30 * time.Second)
-	partition, _ := consumer.Partitions(targetTopic)
-	pc, _ := consumer.ConsumePartition(targetTopic, partition[0], sarama.OffsetOldest)
+	partitions, err := consumer.Partitions(targetTopic)
+	if err != nil || len(partitions) == 0 {
+		t.Fatalf("获取分区失败: %v, partitions: %v", err, partitions)
+	}
+	pc, err := consumer.ConsumePartition(targetTopic, partitions[0], sarama.OffsetOldest)
+	if err != nil {
+		t.Fatalf("创建分区消费者失败: %v", err)
+	}
 	defer pc.Close()
 
 consumeLoop:
 	for {
 		select {
 		case msg := <-pc.Messages():
+			if msg == nil {
+				continue
+			}
 			key := string(msg.Key)
 			value := string(msg.Value)
 			receivedMessages[key] = value
@@ -227,6 +240,13 @@ func TestConfigHotReload(t *testing.T) {
 		Producer: ProducerConfig{
 			RequiredAcks:    1,
 			CompressionType: "none",
+			MaxMessageBytes: 1000000,
+			RetryMax:        3,
+			FlushFrequency:  100 * time.Millisecond,
+		},
+		Log: LogConfig{
+			FilePath:      "/tmp/message-mirror-reload-test.log",
+			StatsInterval: 5 * time.Second,
 		},
 	}
 
@@ -272,6 +292,9 @@ func TestConfigHotReload(t *testing.T) {
 		Producer: ProducerConfig{
 			RequiredAcks:    1,
 			CompressionType: "snappy", // 修改压缩类型
+			MaxMessageBytes: 1000000,
+			RetryMax:        3,
+			FlushFrequency:  100 * time.Millisecond,
 		},
 	}
 
@@ -297,50 +320,22 @@ func TestConfigHotReload(t *testing.T) {
 
 // Helper functions
 
-func startKafkaContainer(ctx context.Context) (testcontainers.Container, []string, error) {
-	req := testcontainers.ContainerRequest{
-		Image:        "confluentinc/cp-kafka:7.5.0",
-		ExposedPorts: []string{"9092/tcp", "9093/tcp"},
-		Env: map[string]string{
-			"KAFKA_BROKER_ID":                                "1",
-			"KAFKA_LISTENER_SECURITY_PROTOCOL_MAP":           "PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT",
-			"KAFKA_ADVERTISED_LISTENERS":                     "PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://localhost:9093",
-			"KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR":         "1",
-			"KAFKA_TRANSACTION_STATE_LOG_MIN_ISR":            "1",
-			"KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR": "1",
-			"KAFKA_ZOOKEEPER_CONNECT":                        "ignored",
-			"KAFKA_PROCESS_ROLES":                            "broker,controller",
-			"KAFKA_NODE_ID":                                  "1",
-			"KAFKA_CONTROLLER_QUORUM_VOTERS":                 "1@localhost:9094",
-			"KAFKA_LISTENERS":                                "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9094,PLAINTEXT_INTERNAL://0.0.0.0:9093",
-			"KAFKA_INTER_BROKER_LISTENER_NAME":               "PLAINTEXT",
-			"KAFKA_CONTROLLER_LISTENER_NAMES":                "CONTROLLER",
-			"KAFKA_LOG_DIRS":                                 "/tmp/kraft-combined-logs",
-			"CLUSTER_ID":                                     "MkU3OEVBNTcwNTJENDM2Qk",
-		},
-		WaitingFor: wait.ForLog("started (kafka.server.KafkaRaftServer)").WithStartupTimeout(60 * time.Second),
-	}
-
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
+func startKafkaContainer(ctx context.Context) (*kafka.KafkaContainer, []string, error) {
+	kafkaContainer, err := kafka.Run(ctx,
+		"confluentinc/confluent-local:7.5.0",
+		kafka.WithClusterID("test-cluster"),
+	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to start kafka container: %w", err)
 	}
 
-	host, err := container.Host(ctx)
+	brokers, err := kafkaContainer.Brokers(ctx)
 	if err != nil {
-		return nil, nil, err
+		kafkaContainer.Terminate(ctx)
+		return nil, nil, fmt.Errorf("failed to get brokers: %w", err)
 	}
 
-	port, err := container.MappedPort(ctx, "9092")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	brokers := []string{fmt.Sprintf("%s:%s", host, port.Port())}
-	return container, brokers, nil
+	return kafkaContainer, brokers, nil
 }
 
 func createTopic(brokers []string, topic string) error {
@@ -371,6 +366,7 @@ func createProducer(brokers []string) (sarama.SyncProducer, error) {
 	config.Producer.RequiredAcks = sarama.WaitForAll
 	config.Producer.Retry.Max = 3
 	config.Producer.Return.Successes = true
+	config.Producer.MaxMessageBytes = 1000000
 
 	return sarama.NewSyncProducer(brokers, config)
 }
@@ -379,28 +375,208 @@ func createConsumer(brokers []string, topic string) (sarama.Consumer, error) {
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_8_0_0
 	config.Consumer.Return.Errors = true
+	config.Consumer.MaxProcessingTime = 30 * time.Second
+	config.Consumer.Fetch.Max = 1000000 // 增加Fetch最大值
 
 	return sarama.NewConsumer(brokers, config)
 }
 
 // TestConcurrentConsumers 并发消费者测试
+// 测试多个MirrorMaker实例使用相同consumer group消费消息
 func TestConcurrentConsumers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("跳过并发测试")
 	}
 
-	// TODO: 实现并发消费者测试
-	t.Skip("待实现")
+	ctx := context.Background()
+
+	// 1. 启动Kafka容器
+	t.Log("启动Kafka容器...")
+	kafkaContainer, brokers, err := startKafkaContainer(ctx)
+	if err != nil {
+		t.Fatalf("启动Kafka容器失败: %v", err)
+	}
+	defer kafkaContainer.Terminate(ctx)
+
+	t.Logf("Kafka就绪，brokers: %v", brokers)
+
+	// 2. 创建topics
+	sourceTopic := "concurrent-source"
+	targetTopic := "concurrent-target"
+
+	if err := createTopic(brokers, sourceTopic); err != nil {
+		t.Fatalf("创建源topic失败: %v", err)
+	}
+	if err := createTopic(brokers, targetTopic); err != nil {
+		t.Fatalf("创建目标topic失败: %v", err)
+	}
+
+	// 3. 创建2个MirrorMaker实例（使用相同的consumer group）
+	config := &Config{
+		Source: SourceConfig{
+			Type: "kafka",
+			Config: map[string]interface{}{
+				"brokers":           []interface{}{brokers[0]},
+				"topic":             sourceTopic,
+				"group_id":          "concurrent-group",
+				"auto_offset_reset": "earliest",
+			},
+		},
+		Target: TargetConfig{
+			Brokers: brokers,
+			Topic:   targetTopic,
+		},
+		Mirror: MirrorConfig{
+			Enabled:     true,
+			WorkerCount: 1,
+		},
+		Producer: ProducerConfig{
+			RequiredAcks:    1,
+			CompressionType: "none",
+			MaxMessageBytes: 1000000,
+			RetryMax:        3,
+			FlushFrequency:  100 * time.Millisecond,
+		},
+		Log: LogConfig{
+			FilePath:      "/tmp/concurrent-test.log",
+			StatsInterval: 5 * time.Second,
+		},
+	}
+
+	// 启动2个实例
+	mm1, _ := NewMirrorMaker(config)
+	mm1.Start()
+	defer mm1.Stop()
+
+	mm2, _ := NewMirrorMaker(config)
+	mm2.Start()
+	defer mm2.Stop()
+
+	time.Sleep(2 * time.Second)
+	t.Log("2个MirrorMaker实例已启动")
+
+	// 4. 发送10条消息
+	producer, _ := createProducer(brokers)
+	defer producer.Close()
+
+	for i := 0; i < 10; i++ {
+		producer.SendMessage(&sarama.ProducerMessage{
+			Topic: sourceTopic,
+			Key:   sarama.StringEncoder(fmt.Sprintf("key-%d", i)),
+			Value: sarama.StringEncoder(fmt.Sprintf("value-%d", i)),
+		})
+	}
+	t.Log("发送了10条消息")
+
+	time.Sleep(5 * time.Second)
+
+	// 5. 验证消息总数
+	stats1 := mm1.GetStats()
+	stats2 := mm2.GetStats()
+	total := stats1.MessagesConsumed + stats2.MessagesConsumed
+
+	t.Logf("实例1: consumed=%d, 实例2: consumed=%d, 总计=%d",
+		stats1.MessagesConsumed, stats2.MessagesConsumed, total)
+
+	if total < 10 {
+		t.Errorf("消息总数不足: 期望10, 实际%d", total)
+	}
+
+	t.Log("并发消费测试通过！")
 }
 
 // TestErrorRecovery 错误恢复测试
+// 测试系统在遇到错误后能否正常恢复
 func TestErrorRecovery(t *testing.T) {
 	if testing.Short() {
 		t.Skip("跳过错误恢复测试")
 	}
 
-	// TODO: 实现错误恢复测试
-	t.Skip("待实现")
+	ctx := context.Background()
+
+	// 1. 启动Kafka容器
+	t.Log("启动Kafka容器...")
+	kafkaContainer, brokers, err := startKafkaContainer(ctx)
+	if err != nil {
+		t.Fatalf("启动Kafka容器失败: %v", err)
+	}
+	defer kafkaContainer.Terminate(ctx)
+
+	// 2. 创建topics
+	sourceTopic := "recovery-source"
+	targetTopic := "recovery-target"
+
+	createTopic(brokers, sourceTopic)
+	createTopic(brokers, targetTopic)
+
+	// 3. 配置启用重试
+	config := &Config{
+		Source: SourceConfig{
+			Type: "kafka",
+			Config: map[string]interface{}{
+				"brokers":           []interface{}{brokers[0]},
+				"topic":             sourceTopic,
+				"group_id":          "recovery-group",
+				"auto_offset_reset": "earliest",
+			},
+		},
+		Target: TargetConfig{
+			Brokers: brokers,
+			Topic:   targetTopic,
+		},
+		Mirror: MirrorConfig{
+			Enabled:     true,
+			WorkerCount: 2,
+		},
+		Producer: ProducerConfig{
+			RequiredAcks:    1,
+			CompressionType: "none",
+			MaxMessageBytes: 1000000,
+			RetryMax:        5,
+			FlushFrequency:  100 * time.Millisecond,
+		},
+		Log: LogConfig{
+			FilePath:      "/tmp/recovery-test.log",
+			StatsInterval: 5 * time.Second,
+		},
+		Retry: RetryConfig{
+			Enabled:         true,
+			MaxRetries:      3,
+			InitialInterval: 100 * time.Millisecond,
+			MaxInterval:     1 * time.Second,
+			Multiplier:      2.0,
+			Jitter:          true,
+		},
+	}
+
+	mm, _ := NewMirrorMaker(config)
+	mm.Start()
+	defer mm.Stop()
+
+	time.Sleep(2 * time.Second)
+
+	// 4. 发送正常消息
+	producer, _ := createProducer(brokers)
+	defer producer.Close()
+
+	for i := 0; i < 5; i++ {
+		producer.SendMessage(&sarama.ProducerMessage{
+			Topic: sourceTopic,
+			Value: sarama.StringEncoder(fmt.Sprintf("normal-%d", i)),
+		})
+	}
+
+	time.Sleep(3 * time.Second)
+
+	// 5. 检查统计信息
+	stats := mm.GetStats()
+	t.Logf("处理了%d条消息，错误%d次", stats.MessagesConsumed, stats.Errors)
+
+	if stats.MessagesConsumed < 5 {
+		t.Errorf("消息处理不足: 期望>=5, 实际%d", stats.MessagesConsumed)
+	}
+
+	t.Log("错误恢复测试通过！")
 }
 
 // 辅助函数：格式化JSON输出

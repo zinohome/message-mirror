@@ -1,0 +1,39 @@
+=== RUN   TestEndToEndKafkaMirroring
+    integration_e2e_test.go:25: 启动Kafka容器...
+2025/12/13 12:30:41 github.com/testcontainers/testcontainers-go - Connected to docker: 
+  Server Version: 28.5.2
+  API Version: 1.51
+  Operating System: Docker Desktop
+  Total Memory: 16237 MB
+  Labels:
+    com.docker.desktop.address=unix:///Users/zhangjun/Library/Containers/com.docker.docker/Data/docker-cli.sock
+  Testcontainers for Go Version: v0.40.0
+  Resolved Docker Host: unix:///var/run/docker.sock
+  Resolved Docker Socket Path: /var/run/docker.sock
+  Test SessionID: afbbdd43a5b1f2fba02cc46364112164c61fe9fbad02fcf75e44ad8d4ad1508f
+  Test ProcessID: 4d1bbda1-91b9-4a89-a372-740889c0223d
+2025/12/13 12:30:41 🐳 Creating container for image confluentinc/cp-kafka:7.5.0
+2025/12/13 12:30:41 🐳 Creating container for image testcontainers/ryuk:0.13.0
+2025/12/13 12:30:41 ✅ Container created: 7e775481389a
+2025/12/13 12:30:41 🐳 Starting container: 7e775481389a
+2025/12/13 12:30:41 ✅ Container started: 7e775481389a
+2025/12/13 12:30:41 ⏳ Waiting for container id 7e775481389a image: testcontainers/ryuk:0.13.0. Waiting for: port 8080/tcp to be listening
+2025/12/13 12:30:41 Shell not found in container
+2025/12/13 12:30:41 🔔 Container is ready: 7e775481389a
+2025/12/13 12:30:41 ✅ Container created: 8fd316fdb39d
+2025/12/13 12:30:41 🐳 Starting container: 8fd316fdb39d
+2025/12/13 12:30:41 ✅ Container started: 8fd316fdb39d
+2025/12/13 12:30:41 ⏳ Waiting for container id 8fd316fdb39d image: confluentinc/cp-kafka:7.5.0. Waiting for: log message "started (kafka.server.KafkaRaftServer)"
+2025/12/13 12:30:46 🔔 Container is ready: 8fd316fdb39d
+    integration_e2e_test.go:34: Kafka就绪，brokers: [localhost:55013]
+    integration_e2e_test.go:46: Topics创建成功
+    integration_e2e_test.go:78: 启动MirrorMaker...
+    integration_e2e_test.go:81: 创建MirrorMaker失败: 创建生产者失败: 创建生产者失败: kafka: invalid configuration (Idempotent producer requires Net.MaxOpenRequests to be 1)
+2025/12/13 12:30:51 🐳 Stopping container: 8fd316fdb39d
+2025/12/13 12:30:52 ✅ Container stopped: 8fd316fdb39d
+2025/12/13 12:30:52 🐳 Terminating container: 8fd316fdb39d
+2025/12/13 12:30:52 🚫 Container terminated: 8fd316fdb39d
+--- FAIL: TestEndToEndKafkaMirroring (11.18s)
+FAIL
+FAIL	message-mirror/internal/core	11.203s
+FAIL
