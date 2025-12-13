@@ -3,7 +3,6 @@ package plugins
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,25 +14,25 @@ import (
 
 // FilePlugin 文件监控数据源插件
 type FilePlugin struct {
-	config     *FilePluginConfig
-	watcher    *fsnotify.Watcher
-	msgChan    chan *Message
-	stats      *FilePluginStats
-	statsMu    sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	config         *FilePluginConfig
+	watcher        *fsnotify.Watcher
+	msgChan        chan *Message
+	stats          *FilePluginStats
+	statsMu        sync.RWMutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
 	processedFiles map[string]bool
 	processedMu    sync.RWMutex
 }
 
 // FilePluginConfig 文件插件配置
 type FilePluginConfig struct {
-	WatchDir      string
-	FinishDir     string
-	FilePattern   string // 文件匹配模式，如 "*.txt", "*.json"
-	PollInterval  time.Duration
-	Recursive     bool // 是否递归监控子目录
+	WatchDir     string
+	FinishDir    string
+	FilePattern  string // 文件匹配模式，如 "*.txt", "*.json"
+	PollInterval time.Duration
+	Recursive    bool // 是否递归监控子目录
 }
 
 // FilePluginStats 文件插件统计信息
@@ -141,7 +140,7 @@ func (p *FilePlugin) Start(ctx context.Context) error {
 		return fmt.Errorf("添加监控目录失败: %w", err)
 	}
 
-	log.Printf("[文件插件] 开始监控目录: %s (模式: %s)", p.config.WatchDir, p.config.FilePattern)
+	pluginLogf("[文件插件] 开始监控目录: %s (模式: %s)", p.config.WatchDir, p.config.FilePattern)
 
 	// 处理文件系统事件
 	p.wg.Add(1)
@@ -180,7 +179,7 @@ func (p *FilePlugin) watchEvents() {
 			if !ok {
 				return
 			}
-			log.Printf("[文件插件] 监控错误: %v", err)
+			pluginLogf("[文件插件] 监控错误: %v", err)
 			p.statsMu.Lock()
 			p.stats.Errors++
 			p.statsMu.Unlock()
@@ -220,7 +219,7 @@ func (p *FilePlugin) scanDirectory(dir string) {
 	})
 
 	if err != nil {
-		log.Printf("[文件插件] 扫描目录错误: %v", err)
+		pluginLogf("[文件插件] 扫描目录错误: %v", err)
 	}
 }
 
@@ -251,7 +250,7 @@ func (p *FilePlugin) processFile(filePath string) {
 	// 读取文件内容
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		log.Printf("[文件插件] 读取文件失败 %s: %v", filePath, err)
+		pluginLogf("[文件插件] 读取文件失败 %s: %v", filePath, err)
 		p.statsMu.Lock()
 		p.stats.Errors++
 		p.statsMu.Unlock()
@@ -312,7 +311,7 @@ func (p *FilePlugin) moveToFinishDir(filePath string) error {
 	p.stats.FilesProcessed++
 	p.statsMu.Unlock()
 
-	log.Printf("[文件插件] 文件已移动到完成目录: %s -> %s", filePath, finishPath)
+	pluginLogf("[文件插件] 文件已移动到完成目录: %s -> %s", filePath, finishPath)
 	return nil
 }
 
@@ -328,7 +327,7 @@ func (p *FilePlugin) Stop() error {
 	if p.msgChan != nil {
 		close(p.msgChan)
 	}
-	log.Println("[文件插件] 已停止")
+	pluginLogln("[文件插件] 已停止")
 	return nil
 }
 

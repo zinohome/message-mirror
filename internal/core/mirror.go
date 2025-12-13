@@ -92,6 +92,9 @@ func NewMirrorMaker(config *Config) (*MirrorMaker, error) {
 		return nil, fmt.Errorf("创建日志管理器失败: %w", err)
 	}
 
+	// 将统一日志注入插件
+	plugins.SetLogger(loggerInstance)
+
 	// 创建速率限制器
 	var consumerLimiter, producerLimiter, bytesLimiter *ratelimiter.RateLimiter
 

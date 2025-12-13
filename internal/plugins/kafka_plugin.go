@@ -3,23 +3,22 @@ package plugins
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
-	
+
 	"message-mirror/internal/pkg/security"
 )
 
 // KafkaPlugin Kafka数据源插件
 type KafkaPlugin struct {
-	config     *KafkaPluginConfig
-	consumer   sarama.ConsumerGroup
-	msgChan    chan *Message
-	handler    *kafkaConsumerGroupHandler
-	stats      *KafkaPluginStats
-	statsMu    sync.RWMutex
+	config   *KafkaPluginConfig
+	consumer sarama.ConsumerGroup
+	msgChan  chan *Message
+	handler  *kafkaConsumerGroupHandler
+	stats    *KafkaPluginStats
+	statsMu  sync.RWMutex
 }
 
 // KafkaPluginConfig Kafka插件配置
@@ -217,7 +216,7 @@ func (p *KafkaPlugin) Initialize(config map[string]interface{}) error {
 				Enabled:            enabled,
 				InsecureSkipVerify: false,
 			}
-			
+
 			if certFile, ok := tlsConfig["cert_file"].(string); ok {
 				tlsCfg.CertFile = certFile
 			}
@@ -236,7 +235,7 @@ func (p *KafkaPlugin) Initialize(config map[string]interface{}) error {
 			if maxVersion, ok := tlsConfig["max_version"].(string); ok {
 				tlsCfg.MaxVersion = maxVersion
 			}
-			
+
 			tlsConfigObj, err := security.NewTLSConfig(tlsCfg)
 			if err != nil {
 				return fmt.Errorf("创建TLS配置失败: %w", err)
@@ -247,7 +246,7 @@ func (p *KafkaPlugin) Initialize(config map[string]interface{}) error {
 			}
 		}
 	}
-	
+
 	// SASL配置
 	if cfg.SecurityProtocol == "SASL_PLAINTEXT" || cfg.SecurityProtocol == "SASL_SSL" {
 		saramaConfig.Net.SASL.Enable = true
@@ -280,7 +279,7 @@ func (p *KafkaPlugin) Start(ctx context.Context) error {
 		return fmt.Errorf("没有配置要消费的topics")
 	}
 
-	log.Printf("[Kafka插件] 开始消费topics: %v", topics)
+	pluginLogf("[Kafka插件] 开始消费topics: %v", topics)
 
 	go func() {
 		for {
@@ -292,7 +291,7 @@ func (p *KafkaPlugin) Start(ctx context.Context) error {
 					p.statsMu.Lock()
 					p.stats.Errors++
 					p.statsMu.Unlock()
-					log.Printf("[Kafka插件] 消费错误: %v", err)
+					pluginLogf("[Kafka插件] 消费错误: %v", err)
 					time.Sleep(1 * time.Second)
 				}
 			}

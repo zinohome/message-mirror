@@ -3,7 +3,6 @@ package plugins
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -12,21 +11,21 @@ import (
 
 // RabbitMQPlugin RabbitMQ数据源插件
 type RabbitMQPlugin struct {
-	config     *RabbitMQPluginConfig
-	conn       *amqp.Connection
-	channel    *amqp.Channel
-	msgChan    chan *Message
-	stats      *RabbitMQPluginStats
-	statsMu    sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
+	config  *RabbitMQPluginConfig
+	conn    *amqp.Connection
+	channel *amqp.Channel
+	msgChan chan *Message
+	stats   *RabbitMQPluginStats
+	statsMu sync.RWMutex
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // RabbitMQPluginConfig RabbitMQ插件配置
 type RabbitMQPluginConfig struct {
-	URL      string
-	Exchange string
-	Queue    string
+	URL          string
+	Exchange     string
+	Queue        string
 	QueueOptions *RabbitMQQueueOptions
 }
 
@@ -162,10 +161,10 @@ func (p *RabbitMQPlugin) Start(ctx context.Context) error {
 		false, // global
 	)
 	if err != nil {
-		log.Printf("[RabbitMQ插件] 设置QoS失败: %v", err)
+		pluginLogf("[RabbitMQ插件] 设置QoS失败: %v", err)
 	}
 
-	log.Printf("[RabbitMQ插件] 开始消费队列: %s", p.config.Queue)
+	pluginLogf("[RabbitMQ插件] 开始消费队列: %s", p.config.Queue)
 
 	// 开始消费消息
 	deliveries, err := p.channel.Consume(
@@ -192,7 +191,7 @@ func (p *RabbitMQPlugin) Start(ctx context.Context) error {
 				return
 			case delivery, ok := <-deliveries:
 				if !ok {
-					log.Printf("[RabbitMQ插件] 消息通道已关闭")
+					pluginLogf("[RabbitMQ插件] 消息通道已关闭")
 					return
 				}
 
@@ -244,7 +243,7 @@ func (p *RabbitMQPlugin) Stop() error {
 	if p.msgChan != nil {
 		close(p.msgChan)
 	}
-	log.Println("[RabbitMQ插件] 已停止")
+	pluginLogln("[RabbitMQ插件] 已停止")
 	return nil
 }
 

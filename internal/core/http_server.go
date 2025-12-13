@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"message-mirror/internal/pkg/metrics"
@@ -25,6 +26,7 @@ type HTTPServer struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
+	wsUpgrader    websocket.Upgrader
 }
 
 // NewHTTPServer 创建新的HTTP服务器
@@ -44,18 +46,26 @@ func NewHTTPServer(addr string, metricsInstance *metrics.Metrics, mirror *Mirror
 		configManager: configManager,
 		ctx:           serverCtx,
 		cancel:        cancel,
+		wsUpgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true // 允许所有来源的WebSocket连接（生产环境应该更严格）
+			},
+		},
 	}
 
 	// 注册路由
 	mux.HandleFunc("/health", httpServer.healthHandler)
 	mux.HandleFunc("/ready", httpServer.readyHandler)
 	mux.Handle("/metrics", promhttp.Handler())
-	
+
 	// 配置API
 	mux.HandleFunc("/api/config", httpServer.configHandler)
 	mux.HandleFunc("/api/config/reload", httpServer.configReloadHandler)
 	mux.HandleFunc("/api/stats", httpServer.statsHandler)
-	
+
+	// WebSocket端点
+	mux.HandleFunc("/ws/stats", httpServer.statsWebSocketHandler)
+
 	// Web UI静态文件
 	mux.HandleFunc("/", httpServer.webUIHandler)
 	mux.HandleFunc("/ui", httpServer.webUIHandler)
@@ -270,3 +280,81 @@ func (s *HTTPServer) webUIHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(web.GetWebUIHTML()))
 }
 
+// statsWebSocketHandler 统计信息WebSocket处理器
+func (s *HTTPServer) statsWebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	// 升级HTTP连接为WebSocket
+	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket升级失败: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// 设置读取超时
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
+	if s.mirror == nil {
+		conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"MirrorMaker未初始化"}`))
+		return
+	}
+
+	// 创建ticker，每秒发送统计信息
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	// 创建ping ticker，保持连接活跃
+	pingTicker := time.NewTicker(30 * time.Second)
+	defer pingTicker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+
+		case <-ticker.C:
+			// 获取统计信息
+			stats := s.mirror.GetStats()
+			response := map[string]interface{}{
+				"messages_consumed": stats.MessagesConsumed,
+				"messages_produced": stats.MessagesProduced,
+				"bytes_consumed":    stats.BytesConsumed,
+				"bytes_produced":    stats.BytesProduced,
+				"errors":            stats.Errors,
+				"last_message_time": stats.LastMessageTime.Unix(),
+				"start_time":        stats.StartTime.Unix(),
+				"uptime_seconds":    time.Since(stats.StartTime).Seconds(),
+				"consume_rate":      float64(stats.BytesConsumed) / time.Since(stats.StartTime).Seconds() / 1024,
+				"produce_rate":      float64(stats.BytesProduced) / time.Since(stats.StartTime).Seconds() / 1024,
+			}
+
+			// 发送统计信息
+			data, err := json.Marshal(response)
+			if err != nil {
+				log.Printf("序列化统计信息失败: %v", err)
+				return
+			}
+
+			err = conn.WriteMessage(websocket.TextMessage, data)
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("WebSocket错误: %v", err)
+				}
+				return
+			}
+
+		case <-pingTicker.C:
+			// 发送ping保持连接
+			err := conn.WriteMessage(websocket.PingMessage, nil)
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("WebSocket ping错误: %v", err)
+				}
+				return
+			}
+		}
+	}
+}

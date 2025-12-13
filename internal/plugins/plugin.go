@@ -2,7 +2,11 @@ package plugins
 
 import (
 	"context"
+	"log"
+	"sync"
 	"time"
+
+	"message-mirror/internal/pkg/logger"
 )
 
 // Message 统一的消息格式
@@ -11,7 +15,7 @@ type Message struct {
 	Value     []byte
 	Headers   map[string][]byte
 	Timestamp time.Time
-	Source    string // 消息来源标识
+	Source    string                 // 消息来源标识
 	Metadata  map[string]interface{} // 额外的元数据，插件可以自定义
 }
 
@@ -57,6 +61,11 @@ var globalRegistry = &PluginRegistry{
 	plugins: make(map[string]func() SourcePlugin),
 }
 
+var (
+	loggerMu       sync.RWMutex
+	loggerInstance *logger.Logger
+)
+
 // Register 注册插件
 func (r *PluginRegistry) Register(name string, factory func() SourcePlugin) {
 	r.plugins[name] = factory
@@ -97,4 +106,35 @@ func RegisterPlugin(name string, factory func() SourcePlugin) {
 // CreatePlugin 全局函数：创建插件实例
 func CreatePlugin(name string) (SourcePlugin, error) {
 	return globalRegistry.Create(name)
+}
+
+// SetLogger 注入统一日志实例供所有插件使用
+func SetLogger(l *logger.Logger) {
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	loggerInstance = l
+}
+
+func pluginLogf(format string, args ...interface{}) {
+	loggerMu.RLock()
+	l := loggerInstance
+	loggerMu.RUnlock()
+
+	if l != nil {
+		l.Printf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
+}
+
+func pluginLogln(args ...interface{}) {
+	loggerMu.RLock()
+	l := loggerInstance
+	loggerMu.RUnlock()
+
+	if l != nil {
+		l.Println(args...)
+		return
+	}
+	log.Println(args...)
 }

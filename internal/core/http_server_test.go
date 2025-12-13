@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"message-mirror/internal/pkg/metrics"
 )
 
@@ -466,5 +468,248 @@ mirror:
 	tmpFile.Close()
 	
 	return tmpFile, nil
+}
+
+// createTempConfigFileForAPITest 创建临时配置文件（用于API测试）
+func createTempConfigFileForAPITest(content string) (*os.File, error) {
+	tmpFile, err := os.CreateTemp("", "test-config-*.yaml")
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := tmpFile.WriteString(content); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return nil, err
+	}
+	tmpFile.Close()
+
+	return tmpFile, nil
+}
+
+// TestHTTPServer_statsWebSocketHandler 测试WebSocket统计信息处理器
+func TestHTTPServer_statsWebSocketHandler(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	metricsInstance := metrics.NewMetrics()
+	mirror := &MirrorMaker{
+		stats: &Stats{
+			MessagesConsumed: 100,
+			MessagesProduced: 90,
+			BytesConsumed:    1024,
+			BytesProduced:    900,
+			Errors:           2,
+			StartTime:        time.Now().Add(-10 * time.Second),
+			LastMessageTime:  time.Now(),
+		},
+	}
+	configManager := &ConfigManager{}
+	server := NewHTTPServer(":0", metricsInstance, mirror, configManager, ctx)
+
+	// 创建测试HTTP服务器
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws/stats", server.statsWebSocketHandler)
+	testServer := httptest.NewServer(mux)
+	defer testServer.Close()
+
+	// 转换为WebSocket URL
+	wsURL := "ws" + testServer.URL[4:] + "/ws/stats"
+
+	// 连接WebSocket
+	dialer := &websocket.Dialer{}
+	ws, _, err := dialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("WebSocket连接失败: %v", err)
+	}
+	defer ws.Close()
+
+	// 接收第一条消息
+	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("读取WebSocket消息失败: %v", err)
+	}
+
+	// 验证消息内容
+	var data map[string]interface{}
+	err = json.Unmarshal(msg, &data)
+	if err != nil {
+		t.Fatalf("解析WebSocket消息失败: %v", err)
+	}
+
+	if int64(data["messages_consumed"].(float64)) != 100 {
+		t.Errorf("期望messages_consumed=100，实际%v", data["messages_consumed"])
+	}
+
+	// 接收第二条消息（验证周期性更新）
+	ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, msg2, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("读取第二条WebSocket消息失败: %v", err)
+	}
+
+	var data2 map[string]interface{}
+	err = json.Unmarshal(msg2, &data2)
+	if err != nil {
+		t.Fatalf("解析第二条WebSocket消息失败: %v", err)
+	}
+
+	// 验证两条消息都包含必要字段
+	requiredFields := []string{"messages_consumed", "messages_produced", "uptime_seconds"}
+	for _, field := range requiredFields {
+		if _, exists := data[field]; !exists {
+			t.Errorf("消息缺少字段: %s", field)
+		}
+		if _, exists := data2[field]; !exists {
+			t.Errorf("第二条消息缺少字段: %s", field)
+		}
+	}
+}
+
+// TestHTTPServer_configHandler_GET 测试GET配置端点
+func TestHTTPServer_configHandler_GET(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	// 创建临时配置文件
+	tmpFile, err := createTempConfigFileForAPITest(`source:
+  type: kafka
+target:
+  brokers: ["localhost:9092"]
+  topic: test-topic
+`)
+	if err != nil {
+		t.Fatalf("创建临时配置文件失败: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// 创建ConfigManager
+	configManager, err := NewConfigManager(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("创建ConfigManager失败: %v", err)
+	}
+
+	metricsInstance := metrics.NewMetrics()
+	mirror := &MirrorMaker{}
+	server := NewHTTPServer(":0", metricsInstance, mirror, configManager, ctx)
+
+	// 发送GET请求
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	w := httptest.NewRecorder()
+	server.configHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("期望状态码200，实际%d", w.Code)
+	}
+
+	// 解析响应
+	var respConfig Config
+	err = json.Unmarshal(w.Body.Bytes(), &respConfig)
+	if err != nil {
+		t.Fatalf("解析配置响应失败: %v", err)
+	}
+
+	if respConfig.Source.Type != "kafka" {
+		t.Errorf("期望source.type='kafka'，实际'%s'", respConfig.Source.Type)
+	}
+	if len(respConfig.Target.Brokers) != 1 || respConfig.Target.Brokers[0] != "localhost:9092" {
+		t.Errorf("期望target.brokers=['localhost:9092']，实际%v", respConfig.Target.Brokers)
+	}
+}
+
+// TestHTTPServer_configHandler_POST 测试POST配置端点
+func TestHTTPServer_configHandler_POST(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	// 创建临时配置文件
+	tmpFile, err := createTempConfigFileForAPITest(`source:
+  type: kafka
+target:
+  brokers: ["localhost:9092"]
+  topic: test-topic
+`)
+	if err != nil {
+		t.Fatalf("创建临时配置文件失败: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// 创建ConfigManager
+	configManager, err := NewConfigManager(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("创建ConfigManager失败: %v", err)
+	}
+
+	metricsInstance := metrics.NewMetrics()
+	mirror := &MirrorMaker{}
+	server := NewHTTPServer(":0", metricsInstance, mirror, configManager, ctx)
+
+	// 新配置
+	newConfig := Config{
+		Source: SourceConfig{Type: "rabbitmq"},
+		Target: TargetConfig{
+			Brokers: []string{"localhost:9092", "localhost:9093"},
+			Topic:   "new-topic",
+		},
+		Mirror: MirrorConfig{
+			WorkerCount: 4,
+		},
+	}
+	newConfigData, err := json.Marshal(newConfig)
+	if err != nil {
+		t.Fatalf("序列化新配置失败: %v", err)
+	}
+
+	// 发送POST请求
+	req := httptest.NewRequest("POST", "/api/config", bytes.NewReader(newConfigData))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.configHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("期望状态码200，实际%d: %s", w.Code, w.Body.String())
+	}
+
+	// 验证配置已更新
+	var response map[string]interface{}
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	if err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+
+	if response["status"] != "success" {
+		t.Errorf("期望status='success'，实际%v", response["status"])
+	}
+}
+
+// TestHTTPServer_CORS 测试CORS头
+func TestHTTPServer_CORS(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	metricsInstance := metrics.NewMetrics()
+	mirror := &MirrorMaker{}
+	configManager := &ConfigManager{}
+	server := NewHTTPServer(":0", metricsInstance, mirror, configManager, ctx)
+
+	// 测试OPTIONS请求（CORS预检）
+	req := httptest.NewRequest("OPTIONS", "/api/config", nil)
+	w := httptest.NewRecorder()
+	server.configHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("期望OPTIONS返回200，实际%d", w.Code)
+	}
+
+	origin := w.Header().Get("Access-Control-Allow-Origin")
+	if origin != "*" {
+		t.Errorf("期望Access-Control-Allow-Origin='*'，实际'%s'", origin)
+	}
 }
 
