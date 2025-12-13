@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: message-mirror
+  namespace: message-mirror
+  labels:
+    app: message-mirror
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    app: message-mirror
+  sessionAffinity: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: message-mirror-headless
+  namespace: message-mirror
+  labels:
+    app: message-mirror
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 8080
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    app: message-mirror

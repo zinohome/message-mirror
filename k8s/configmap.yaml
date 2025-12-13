@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: message-mirror-config
+  namespace: message-mirror
+  labels:
+    app: message-mirror
+data:
+  config.yaml: |
+    # Message Mirror 配置文件 - Kubernetes版本
+    
+    # 数据源配置（插件化）
+    source:
+      type: kafka
+      brokers:
+        - ${SOURCE_KAFKA_BROKERS}
+      topic: ${SOURCE_TOPIC}
+      group_id: ${CONSUMER_GROUP_ID}
+      auto_offset_reset: earliest
+      session_timeout: 30s
+      security_protocol: ${SOURCE_SECURITY_PROTOCOL}
+      sasl_username: ${SOURCE_SASL_USERNAME}
+      sasl_password: ${SOURCE_SASL_PASSWORD}
+    
+    # 目标Kafka集群配置
+    target:
+      brokers:
+        - ${TARGET_KAFKA_BROKERS}
+      topic: ${TARGET_TOPIC}
+      security_protocol: ${TARGET_SECURITY_PROTOCOL}
+      sasl_username: ${TARGET_SASL_USERNAME}
+      sasl_password: ${TARGET_SASL_PASSWORD}
+    
+    # 镜像配置
+    mirror:
+      enabled: true
+      preserve_partition: true
+      offset_sync: false
+      worker_count: ${WORKER_COUNT}
+      consumer_rate_limit: ${CONSUMER_RATE_LIMIT}
+      producer_rate_limit: ${PRODUCER_RATE_LIMIT}
+      bytes_rate_limit: ${BYTES_RATE_LIMIT}
+      batch_enabled: ${BATCH_ENABLED}
+      batch_size: ${BATCH_SIZE}
+      batch_timeout: 100ms
+    
+    # 生产者配置
+    producer:
+      max_message_bytes: 1000000
+      compression_type: ${COMPRESSION_TYPE}
+      required_acks: 1
+      flush_frequency: 100ms
+      retry_max: 3
+      idempotent: true
+    
+    # 日志配置
+    log:
+      file_path: /app/logs/message-mirror.log
+      stats_interval: 10s
+      rotate_interval: 24h
+      max_archive_files: 7
+      async_buffer_size: 1000
+    
+    # HTTP服务器配置
+    server:
+      enabled: true
+      address: :8080
+    
+    # 重试配置
+    retry:
+      enabled: ${RETRY_ENABLED}
+      max_retries: ${RETRY_MAX_RETRIES}
+      initial_interval: 100ms
+      max_interval: 10s
+      multiplier: 2.0
+      jitter: true
+    
+    # 去重配置
+    dedup:
+      enabled: ${DEDUP_ENABLED}
+      strategy: key_value
+      ttl: 24h
+      max_entries: 1000000
+      cleanup_interval: 1h

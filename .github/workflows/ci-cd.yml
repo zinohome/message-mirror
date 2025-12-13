@@ -1,0 +1,238 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  GO_VERSION: '1.21'
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # 代码检查和测试
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run go vet
+      run: go vet ./...
+    
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v4
+      with:
+        version: latest
+    
+    - name: Run unit tests
+      run: go test -v -short -race -coverprofile=coverage.txt -covermode=atomic ./...
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.txt
+        flags: unittests
+  
+  # E2E测试（需要Docker）
+  e2e-test:
+    name: E2E Test
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Setup Docker
+      run: |
+        docker version
+        docker-compose version
+    
+    - name: Run E2E tests
+      run: |
+        go test -v -timeout 20m ./internal/core/ -run "TestEndToEnd|TestConfig|TestConcurrent|TestError"
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: e2e-test-results
+        path: |
+          test_output.log
+          coverage.html
+  
+  # 构建Docker镜像
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [test, e2e-test]
+    if: github.event_name == 'push'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Docker Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.DOCKER_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha
+    
+    - name: Get build info
+      id: build_info
+      run: |
+        echo "BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')" >> $GITHUB_OUTPUT
+        echo "GIT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        echo "VERSION=$(cat VERSION || echo 'dev')" >> $GITHUB_OUTPUT
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        build-args: |
+          VERSION=${{ steps.build_info.outputs.VERSION }}
+          BUILD_TIME=${{ steps.build_info.outputs.BUILD_TIME }}
+          GIT_COMMIT=${{ steps.build_info.outputs.GIT_COMMIT }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+  
+  # 发布Release
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Build release binaries
+      run: |
+        make build-all
+    
+    - name: Generate changelog
+      id: changelog
+      run: |
+        git log --pretty=format:"- %s (%h)" $(git describe --tags --abbrev=0 HEAD^)..HEAD > CHANGELOG.txt
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release/*
+        body_path: CHANGELOG.txt
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  
+  # 部署到Kubernetes
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v4
+      with:
+        version: 'latest'
+    
+    - name: Setup Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: 'latest'
+    
+    - name: Configure kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+    
+    - name: Deploy with Helm
+      run: |
+        helm upgrade --install message-mirror ./helm/message-mirror \
+          --namespace message-mirror \
+          --create-namespace \
+          --values ./helm/message-mirror/values-production.yaml \
+          --set image.tag=${{ github.sha }} \
+          --wait \
+          --timeout 5m
+    
+    - name: Verify deployment
+      run: |
+        kubectl rollout status deployment/message-mirror -n message-mirror --timeout=5m
+        kubectl get pods -n message-mirror
+    
+    - name: Run smoke tests
+      run: |
+        # 等待Pod就绪
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=message-mirror -n message-mirror --timeout=2m
+        
+        # 测试健康检查
+        POD_NAME=$(kubectl get pod -l app.kubernetes.io/name=message-mirror -n message-mirror -o jsonpath='{.items[0].metadata.name}')
+        kubectl exec $POD_NAME -n message-mirror -- wget -O- http://localhost:8080/health
+        kubectl exec $POD_NAME -n message-mirror -- wget -O- http://localhost:8080/ready
+    
+    - name: Notify deployment
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: 'Deployment to production: ${{ job.status }}'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
