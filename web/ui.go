@@ -1,6 +1,28 @@
 package web
 
-// GetWebUIHTML 返回Web UI的HTML内容
+import (
+	"embed"
+	"io/fs"
+	"net/http"
+)
+
+// Embed the dist directory
+//
+//go:embed dist
+var distFS embed.FS
+
+// GetFileSystem returns the embedded file system for the web UI
+func GetFileSystem() (http.FileSystem, error) {
+	// Get the subdirectory
+	subFS, err := fs.Sub(distFS, "dist")
+	if err != nil {
+		return nil, err
+	}
+	return http.FS(subFS), nil
+}
+
+// GetWebUIHTML 返回Web UI的HTML内容（保留向后兼容性）
+// 注意：现在应该使用 GetFileSystem() 来服务完整的React应用
 func GetWebUIHTML() string {
 	return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -444,4 +466,3 @@ func GetWebUIHTML() string {
 </body>
 </html>`
 }
-

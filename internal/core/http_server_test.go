@@ -48,15 +48,15 @@ func TestHTTPServer_Start(t *testing.T) {
 	ctx := context.Background()
 
 	server := NewHTTPServer(":0", metricsInstance, mirror, configManager, ctx) // 使用:0让系统自动分配端口
-	
+
 	err := server.Start()
 	if err != nil {
 		t.Fatalf("启动HTTP服务器失败: %v", err)
 	}
-	
+
 	// 等待服务器启动
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// 停止服务器
 	err = server.Stop()
 	if err != nil {
@@ -73,16 +73,16 @@ func TestHTTPServer_Stop(t *testing.T) {
 
 	server := NewHTTPServer(":0", metricsInstance, mirror, configManager, ctx)
 	server.Start()
-	
+
 	// 等待服务器启动
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// 停止服务器
 	err := server.Stop()
 	if err != nil {
 		t.Fatalf("停止HTTP服务器失败: %v", err)
 	}
-	
+
 	// 再次停止应该不会出错
 	err = server.Stop()
 	if err != nil {
@@ -112,7 +112,7 @@ func TestHTTPServer_healthHandler(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("期望状态码200，实际%d", w.Code)
 	}
-	
+
 	var response map[string]string
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	if err != nil {
@@ -165,7 +165,7 @@ func TestHTTPServer_readyHandler(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("期望状态码200，实际%d", w.Code)
 	}
-	
+
 	var response map[string]string
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestHTTPServer_configHandler(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("期望状态码200，实际%d", w.Code)
 	}
-	
+
 	var config map[string]interface{}
 	err = json.Unmarshal(w.Body.Bytes(), &config)
 	if err != nil {
@@ -459,14 +459,14 @@ mirror:
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if _, err := tmpFile.WriteString(configContent); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpFile.Name())
 		return nil, err
 	}
 	tmpFile.Close()
-	
+
 	return tmpFile, nil
 }
 
@@ -712,4 +712,3 @@ func TestHTTPServer_CORS(t *testing.T) {
 		t.Errorf("期望Access-Control-Allow-Origin='*'，实际'%s'", origin)
 	}
 }
-

@@ -66,9 +66,17 @@ func NewHTTPServer(addr string, metricsInstance *metrics.Metrics, mirror *Mirror
 	// WebSocket端点
 	mux.HandleFunc("/ws/stats", httpServer.statsWebSocketHandler)
 
-	// Web UI静态文件
-	mux.HandleFunc("/", httpServer.webUIHandler)
-	mux.HandleFunc("/ui", httpServer.webUIHandler)
+	// Web UI静态文件（使用构建的React应用）
+	fs, err := web.GetFileSystem()
+	if err != nil {
+		log.Printf("警告: 无法加载Web UI文件系统: %v，将使用备用HTML", err)
+		mux.HandleFunc("/", httpServer.webUIHandler)
+		mux.HandleFunc("/ui", httpServer.webUIHandler)
+	} else {
+		// 服务构建的React应用
+		fileServer := http.FileServer(fs)
+		mux.Handle("/", fileServer)
+	}
 
 	return httpServer
 }
